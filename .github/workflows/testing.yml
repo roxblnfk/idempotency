@@ -1,0 +1,53 @@
+---
+
+name: 🧪 Unit testing
+
+on:  # yamllint disable-line rule:truthy
+  pull_request:
+    branches:
+      - 1.x
+  push:
+    branches:
+      - 1.x
+
+jobs:
+  testing:
+    timeout-minutes: 4
+    runs-on: ${{ matrix.os }}
+    concurrency:
+      cancel-in-progress: true
+      group: testing-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ matrix.php-version }}-${{ matrix.dependencies }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+        php-version:
+          - '8.4'
+          - '8.5'
+        dependencies:
+          # - lowest
+          # - locked
+          - highest
+    steps:
+      - name: 📦 Check out the codebase
+        uses: actions/checkout@v6
+
+      - name: 🛠️ Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          ini-values: error_reporting=E_ALL
+
+      - name: 🤖 Validate composer.json and composer.lock
+        run: composer validate --ansi --strict
+
+      - name: 📥 Install dependencies with composer
+        uses: ramsey/composer-install@v3
+        env:
+          COMPOSER_ROOT_VERSION: '1.x-dev'
+        with:
+          dependency-versions: ${{ matrix.dependencies }}
+
+      - name: 🧪 Run tests
+        run: composer test
