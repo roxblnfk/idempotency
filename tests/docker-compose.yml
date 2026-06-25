@@ -1,0 +1,41 @@
+# Databases for the Acceptance suite.
+#
+#   docker compose -f tests/docker-compose.yml up -d
+#   composer test:pgsql        # or test:mysql / test:sqlite (sqlite needs no service)
+#   docker compose -f tests/docker-compose.yml down -v
+#
+# Ports/credentials match the DB_* defaults in tests/Acceptance/Testo/DatabaseDriver.php, so a local
+# run needs no env vars. Data is on tmpfs (fast, ephemeral) — fine, tables are recreated per run.
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: idempotency-postgres
+    environment:
+      POSTGRES_DB: spiral
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "YourStrong!Passw0rd"
+    ports:
+      - "15432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d spiral"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  mysql:
+    image: mysql:8.4
+    container_name: idempotency-mysql
+    environment:
+      MYSQL_DATABASE: spiral
+      MYSQL_ROOT_PASSWORD: "YourStrong!Passw0rd"
+    ports:
+      - "13306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-pYourStrong!Passw0rd"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    tmpfs:
+      - /var/lib/mysql
