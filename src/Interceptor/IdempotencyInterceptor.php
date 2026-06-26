@@ -8,6 +8,7 @@ use Psr\Container\ContainerInterface;
 use Spiral\Core\BinderInterface;
 use Spiral\Core\ContainerScope;
 use Spiral\Idempotency\Attribute\Idempotent;
+use Spiral\Idempotency\ExecuteOptions;
 use Spiral\Idempotency\IdempotencyContext;
 use Spiral\Idempotency\IdempotencyRegistry;
 use Spiral\Idempotency\KeyResolverInterface;
@@ -68,6 +69,7 @@ final class IdempotencyInterceptor implements InterceptorInterface
                 // so the action can inject IdempotencyContext and narrow to it.
                 return $codec->encode($this->dispatch($operation, $handler, $context));
             },
+            new ExecuteOptions($attribute->lockTtl, $attribute->ttl),
         );
 
         return $codec->decorate($codec->decode($cached), $key, replayed: !$executed);

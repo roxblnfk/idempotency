@@ -6,11 +6,15 @@ namespace Spiral\Idempotency\Tests\Unit\Lease;
 
 use Spiral\Idempotency\Exception\CachedDomainFailureException;
 use Spiral\Idempotency\Exception\LockedException;
+use Spiral\Idempotency\ExecuteOptions;
 use Spiral\Idempotency\IdempotencyContext;
 use Spiral\Idempotency\Internal\Lease\LeaseIdempotency;
 use Spiral\Idempotency\Internal\Lease\LeaseManager;
 use Spiral\Idempotency\Internal\Lease\Storage\InMemoryLeaseStorage;
 use Spiral\Idempotency\Internal\Pipeline\DefaultFailureClassifier;
+use Spiral\Idempotency\Lease\AcquireResult;
+use Spiral\Idempotency\Lease\Acquired;
+use Spiral\Idempotency\Lease\LeaseManagerInterface;
 use Spiral\Idempotency\Tests\Support\MutableClock;
 use Testo\Assert;
 use Testo\Codecov\Covers;
@@ -150,6 +154,60 @@ final class LeaseIdempotencyTest
         }
 
         Assert::same($calls, 2);
+    }
+
+    public function perCallOptionsOverrideConfiguredTtls(): void
+    {
+        $manager = $this->capturingManager();
+        $driver = new LeaseIdempotency($manager, lockTtl: 30, retentionTtl: 3600);
+
+        $driver->execute('k', static fn(): string => 'x', new ExecuteOptions(lockTtl: 5, ttl: 99));
+
+        Assert::same($manager->lockTtl, 5);
+        Assert::same($manager->retentionTtl, 99);
+    }
+
+    public function absentOptionsFallBackToConfiguredTtls(): void
+    {
+        $manager = $this->capturingManager();
+        $driver = new LeaseIdempotency($manager, lockTtl: 30, retentionTtl: 3600);
+
+        // No options at all, then options whose fields are null — both fall back to the config defaults.
+        $driver->execute('k', static fn(): string => 'x');
+        Assert::same($manager->lockTtl, 30);
+        Assert::same($manager->retentionTtl, 3600);
+
+        $driver->execute('k2', static fn(): string => 'x', new ExecuteOptions());
+        Assert::same($manager->lockTtl, 30);
+        Assert::same($manager->retentionTtl, 3600);
+    }
+
+    /**
+     * A lease manager that records the lock/retention TTLs it was asked to use, always granting the lease.
+     */
+    private function capturingManager(): LeaseManagerInterface
+    {
+        return new class implements LeaseManagerInterface {
+            public ?int $lockTtl = null;
+            public ?int $retentionTtl = null;
+
+            public function acquire(string $key, int $lockTtl): AcquireResult
+            {
+                $this->lockTtl = $lockTtl;
+                return new Acquired($key, 'token');
+            }
+
+            public function complete(string $key, string $token, bool $success, mixed $result, int $retentionTtl): void
+            {
+                $this->retentionTtl = $retentionTtl;
+            }
+
+            public function abort(string $key, string $token): void {}
+
+            public function error(string $key, string $token): void {}
+
+            public function renew(string $key, string $token, int $lockTtl): void {}
+        };
     }
 
     public function lockedKeyThrowsLockedException(): never

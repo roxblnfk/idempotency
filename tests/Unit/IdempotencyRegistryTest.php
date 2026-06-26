@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Spiral\Idempotency\Tests\Unit;
 
 use Spiral\Idempotency\Exception\MisconfigurationException;
+use Spiral\Idempotency\ExecuteOptions;
 use Spiral\Idempotency\Guarantee;
 use Spiral\Idempotency\GuaranteeProviderInterface;
 use Spiral\Idempotency\IdempotencyInterface;
@@ -69,7 +70,7 @@ final class IdempotencyRegistryTest
         return new class ($guarantee) implements IdempotencyInterface, GuaranteeProviderInterface {
             public function __construct(private readonly Guarantee $guarantee) {}
 
-            public function execute(string $key, \Closure $operation): mixed
+            public function execute(string $key, \Closure $operation, ?ExecuteOptions $options = null): mixed
             {
                 return $operation;
             }

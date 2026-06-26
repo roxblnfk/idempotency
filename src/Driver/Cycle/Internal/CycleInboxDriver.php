@@ -13,6 +13,7 @@ use Cycle\Transaction\FlushMode;
 use Cycle\Transaction\Transaction;
 use Cycle\Transaction\TransactionMode;
 use Psr\Clock\ClockInterface;
+use Spiral\Idempotency\ExecuteOptions;
 use Spiral\Idempotency\Guarantee;
 use Spiral\Idempotency\GuaranteeProviderInterface;
 use Spiral\Idempotency\IdempotencyInterface;
@@ -60,8 +61,11 @@ final readonly class CycleInboxDriver implements IdempotencyInterface, Guarantee
         return Guarantee::ExactlyOnce;
     }
 
-    public function execute(string $key, \Closure $operation): mixed
+    public function execute(string $key, \Closure $operation, ?ExecuteOptions $options = null): mixed
     {
+        // $options->lockTtl is intentionally ignored: an inbox enforces mutual exclusion via the row
+        // lock of the in-progress INSERT, not a time-bound lease. $options->ttl is reserved for a future
+        // inbox retention/GC (rows are currently kept indefinitely).
         /** @var non-empty-string $key */
         $transaction = ($this->transaction)();
         \assert($transaction instanceof Transaction);

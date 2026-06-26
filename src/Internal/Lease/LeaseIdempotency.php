@@ -7,6 +7,7 @@ namespace Spiral\Idempotency\Internal\Lease;
 use Spiral\Idempotency\Exception\CachedDomainFailureException;
 use Spiral\Idempotency\Exception\IdempotencyException;
 use Spiral\Idempotency\Exception\LockedException;
+use Spiral\Idempotency\ExecuteOptions;
 use Spiral\Idempotency\Guarantee;
 use Spiral\Idempotency\GuaranteeProviderInterface;
 use Spiral\Idempotency\IdempotencyInterface;
@@ -32,10 +33,10 @@ use Spiral\Serializer\SerializerInterface;
  * @internal Built per storage alias by the bootloader; consumers resolve {@see IdempotencyInterface}
  *           from the {@see \Spiral\Idempotency\IdempotencyRegistry}. Not part of the public API.
  */
-final class LeaseIdempotency implements IdempotencyInterface, GuaranteeProviderInterface
+final readonly class LeaseIdempotency implements IdempotencyInterface, GuaranteeProviderInterface
 {
-    private readonly SerializerInterface $serializer;
-    private readonly FailureClassifierInterface $classifier;
+    private SerializerInterface $serializer;
+    private FailureClassifierInterface $classifier;
 
     /**
      * @param int<1, max> $lockTtl PROCESSING lock TTL, seconds (short)
@@ -43,12 +44,12 @@ final class LeaseIdempotency implements IdempotencyInterface, GuaranteeProviderI
      * @param positive-int $acquireRetryLimit bound on AcquireRetry loops
      */
     public function __construct(
-        private readonly LeaseManagerInterface $manager,
-        private readonly int $lockTtl = 30,
-        private readonly int $retentionTtl = 86400,
+        private LeaseManagerInterface $manager,
+        private int $lockTtl = 30,
+        private int $retentionTtl = 86400,
         ?SerializerInterface $serializer = null,
         ?FailureClassifierInterface $classifier = null,
-        private readonly int $acquireRetryLimit = 3,
+        private int $acquireRetryLimit = 3,
     ) {
         $this->serializer = $serializer ?? new PhpSerializer();
         $this->classifier = $classifier ?? new DefaultFailureClassifier();
@@ -59,14 +60,19 @@ final class LeaseIdempotency implements IdempotencyInterface, GuaranteeProviderI
         return Guarantee::AtLeastOnce;
     }
 
-    public function execute(string $key, \Closure $operation): mixed
+    public function execute(string $key, \Closure $operation, ?ExecuteOptions $options = null): mixed
     {
+        /** @var int<1, max> $lockTtl */
+        $lockTtl = $options?->lockTtl ?? $this->lockTtl;
+        /** @var int<1, max> $retentionTtl */
+        $retentionTtl = $options?->ttl ?? $this->retentionTtl;
+
         $attempts = 0;
         do {
-            $result = $this->manager->acquire($key, $this->lockTtl);
+            $result = $this->manager->acquire($key, $lockTtl);
 
             if ($result instanceof Acquired) {
-                return $this->run($result, $operation);
+                return $this->run($result, $operation, $retentionTtl);
             }
 
             if ($result instanceof AlreadyCompleted) {
@@ -87,23 +93,29 @@ final class LeaseIdempotency implements IdempotencyInterface, GuaranteeProviderI
         ));
     }
 
-    private function run(Acquired $lease, \Closure $operation): mixed
+    /**
+     * @param int<1, max> $retentionTtl
+     */
+    private function run(Acquired $lease, \Closure $operation, int $retentionTtl): mixed
     {
         $context = new LeaseContext($lease->key);
 
         try {
             $value = $operation($context);
         } catch (\Throwable $e) {
-            $this->terminateFailure($lease, $e);
+            $this->terminateFailure($lease, $e, $retentionTtl);
             throw $e;
         }
 
-        $this->manager->complete($lease->key, $lease->token, true, $this->encode($value), $this->retentionTtl);
+        $this->manager->complete($lease->key, $lease->token, true, $this->encode($value), $retentionTtl);
 
         return $value;
     }
 
-    private function terminateFailure(Acquired $lease, \Throwable $e): void
+    /**
+     * @param int<1, max> $retentionTtl
+     */
+    private function terminateFailure(Acquired $lease, \Throwable $e, int $retentionTtl): void
     {
         match ($this->classifier->classify($e)) {
             // Domain: a valid (negative) outcome — cache a lightweight snapshot for idempotent replay.
@@ -112,7 +124,7 @@ final class LeaseIdempotency implements IdempotencyInterface, GuaranteeProviderI
                 $lease->token,
                 false,
                 $this->encodeFailure($e),
-                $this->retentionTtl,
+                $retentionTtl,
             ),
             // Bug: unrecoverable, do not re-enqueue; report happens outside.
             FailureKind::Bug => $this->manager->error($lease->key, $lease->token),
