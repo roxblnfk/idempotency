@@ -13,13 +13,11 @@ use Spiral\Idempotency\StorageFactoryInterface;
 use Spiral\Idempotency\StorageServices;
 use Spiral\Idempotency\Internal\Key\KeyResolver;
 use Spiral\Idempotency\Internal\Lease\RandomTokenFactory;
-use Spiral\Idempotency\Internal\PassthroughResultCodec;
 use Spiral\Idempotency\Internal\Pipeline\DefaultFailureClassifier;
 use Spiral\Idempotency\Internal\SystemClock;
 use Spiral\Idempotency\KeyResolverInterface;
 use Spiral\Idempotency\Lease\TokenFactoryInterface;
 use Spiral\Idempotency\Pipeline\FailureClassifierInterface;
-use Spiral\Idempotency\ResultCodecInterface;
 use Spiral\Serializer\Serializer\PhpSerializer;
 use Spiral\Serializer\SerializerInterface;
 
@@ -42,9 +40,6 @@ final class IdempotencyBootloader extends Bootloader
             KeyResolverInterface::class => KeyResolver::class,
             TokenFactoryInterface::class => RandomTokenFactory::class,
             FailureClassifierInterface::class => DefaultFailureClassifier::class,
-            // Default result codec (root scope): results are already serializable. Transports that
-            // return non-serializable results override this binding in their own scope.
-            ResultCodecInterface::class => PassthroughResultCodec::class,
             IdempotencyRegistry::class => $this->initRegistry(...),
         ];
     }

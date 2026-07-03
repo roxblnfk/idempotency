@@ -5,21 +5,18 @@ declare(strict_types=1);
 namespace Spiral\Idempotency\Bootloader;
 
 use Spiral\Boot\Bootloader\Bootloader;
-use Spiral\Core\BinderInterface;
-use Spiral\Idempotency\Http\HttpKeySource;
-use Spiral\Idempotency\Http\HttpResultCodec;
-use Spiral\Idempotency\KeySourceInterface;
-use Spiral\Idempotency\ResultCodecInterface;
 
 /**
- * Opt-in HTTP wiring: inside the HTTP request scope binds {@see KeySourceInterface} to
- * {@see HttpKeySource} and {@see ResultCodecInterface} to {@see HttpResultCodec}. The
- * {@see \Spiral\Idempotency\Interceptor\IdempotencyInterceptor}, resolving both from the active scope,
- * then handles HTTP automatically — no proxy needed. Bind different implementations in another
- * transport's scope (gRPC, queue, ...) to make the same interceptor work there.
+ * Opt-in HTTP wiring for the idempotency pipeline. No scope bindings any more: the HTTP resolution
+ * middleware ({@see \Spiral\Idempotency\Http\HttpKeyMiddleware},
+ * {@see \Spiral\Idempotency\Http\HttpOutcomeMiddleware}) are plain autowired services listed in the
+ * `transports.http` config stack; the request travels inside the call context, so nothing is
+ * per-request-scoped here.
  *
- * Register alongside {@see IdempotencyBootloader} in an app that exposes the #[Idempotent] attribute
- * over HTTP, then add the interceptor to your domain core's interceptor list.
+ * Register alongside {@see IdempotencyBootloader} in an app that exposes #[Idempotent] over HTTP, add
+ * the HTTP middleware to `transports.http` in `config/idempotency.php`, and add an
+ * {@see \Spiral\Idempotency\Interceptor\IdempotencyInterceptor} (transport: 'http') to the HTTP domain
+ * core's interceptor list.
  *
  * @api
  */
@@ -28,13 +25,5 @@ final class HttpIdempotencyBootloader extends Bootloader
     public function defineDependencies(): array
     {
         return [IdempotencyBootloader::class];
-    }
-
-    public function init(BinderInterface $binder): void
-    {
-        // 'http-request' is the framework's per-request HTTP scope name.
-        $http = $binder->getBinder('http-request');
-        $http->bindSingleton(KeySourceInterface::class, HttpKeySource::class);
-        $http->bindSingleton(ResultCodecInterface::class, HttpResultCodec::class);
     }
 }

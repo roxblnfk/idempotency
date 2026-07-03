@@ -33,6 +33,7 @@ final class IdempotencyConfig extends InjectableConfig
     protected array $config = [
         'default' => null,
         'storages' => [],
+        'transports' => [],
     ];
 
     /**
@@ -42,6 +43,19 @@ final class IdempotencyConfig extends InjectableConfig
     {
         /** @var array<non-empty-string, StorageConfig> */
         return $this->config['storages'] ?? [];
+    }
+
+    /**
+     * Ordered resolution-middleware stack for a transport (outer → inner), by class name. The
+     * interceptor resolves each through the container and runs them around the storage handler.
+     *
+     * @param non-empty-string $transport
+     * @return list<class-string<\Spiral\Idempotency\Pipeline\ResolutionMiddleware>>
+     */
+    public function getTransport(string $transport): array
+    {
+        /** @var list<class-string<\Spiral\Idempotency\Pipeline\ResolutionMiddleware>> */
+        return $this->config['transports'][$transport] ?? [];
     }
 
     /**

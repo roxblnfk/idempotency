@@ -8,12 +8,15 @@ use Psr\Container\ContainerInterface;
 use Spiral\Core\BinderInterface;
 use Spiral\Core\ContainerScope;
 use Spiral\Idempotency\Attribute\Idempotent;
+use Spiral\Idempotency\Config\IdempotencyConfig;
+use Spiral\Idempotency\Exception\NonDeterministicKeyException;
 use Spiral\Idempotency\ExecuteOptions;
 use Spiral\Idempotency\IdempotencyContext;
 use Spiral\Idempotency\IdempotencyRegistry;
 use Spiral\Idempotency\KeyResolverInterface;
-use Spiral\Idempotency\KeySourceInterface;
-use Spiral\Idempotency\ResultCodecInterface;
+use Spiral\Idempotency\Pipeline\IdempotencyCall;
+use Spiral\Idempotency\Pipeline\Pipeline;
+use Spiral\Idempotency\Pipeline\ResolutionMiddleware;
 use Spiral\Interceptors\Context\CallContextInterface;
 use Spiral\Interceptors\HandlerInterface;
 use Spiral\Interceptors\InterceptorInterface;
@@ -21,31 +24,32 @@ use Spiral\Interceptors\InterceptorInterface;
 /**
  * Makes controller/handler actions idempotent declaratively via {@see Idempotent}.
  *
- * The interceptor is transport-agnostic: it reads the attribute, resolves a key, and runs the action
- * through the named storage, replaying a cached result instead of re-running on a repeat. Everything
- * transport-specific is resolved from the ACTIVE scope's container at call time (no proxy needed):
+ * Thin, transport-agnostic entry point into the config-driven pipeline: it reads the attribute, builds
+ * an {@see IdempotencyCall} (the whole call context as {@see IdempotencyCall::$context}), assembles this
+ * transport's resolution stack from config, and runs it around the storage handler
+ * (`registry->get(storage)->execute(...)`).
  *
- *  - {@see KeySourceInterface} extracts raw key material from the endpoint context (HTTP: the request
- *    header/field; queue: the payload; ...);
- *  - {@see ResultCodecInterface} marshals the result to/from the cache and decorates it with
- *    idempotency metadata (HTTP: a PSR-7 response snapshot + `Idempotency-*` headers).
+ * Everything transport-specific lives in the resolution middleware (HTTP key extraction, response
+ * marshalling, Locked→409). One instance per transport, parameterized by {@see $transport} — the same
+ * class serves HTTP, Queue, Events by pointing at a different config stack.
  *
- * Bind those two per scope (see {@see \Spiral\Idempotency\Bootloader\HttpIdempotencyBootloader} for
- * HTTP) and this class needs no transport details at all.
- *
- * Best fit for the AtLeastOnce/lease storage: the action's side-effect is non-transactional and the
- * result is what we cache. The ExactlyOnce/inbox storage needs the side-effect written through the
- * bound {@see IdempotencyContext} transaction, which this interceptor does not propagate into the
- * action — use the registry directly there.
+ * The attribute's `key` arg-path (dot-notation over the call arguments) is resolved here, since it is
+ * transport-independent and needs the attribute; a null result lets a transport middleware supply the
+ * key instead.
  *
  * @api
  */
 final class IdempotencyInterceptor implements InterceptorInterface
 {
+    /**
+     * @param non-empty-string $transport config key of this transport's resolution stack
+     */
     public function __construct(
         private readonly IdempotencyRegistry $registry,
         private readonly KeyResolverInterface $keys,
         private readonly ContainerInterface $container,
+        private readonly IdempotencyConfig $config,
+        private readonly string $transport,
     ) {}
 
     public function intercept(CallContextInterface $context, HandlerInterface $handler): mixed
@@ -56,23 +60,61 @@ final class IdempotencyInterceptor implements InterceptorInterface
             return $handler->handle($context);
         }
 
-        $codec = $this->scoped(ResultCodecInterface::class);
-        $key = $this->keys->resolve($this->material($attribute, $context));
-
-        $executed = false;
-        $cached = $this->registry->get($attribute->storage)->execute(
-            $key,
-            function (IdempotencyContext $operation) use (&$executed, $handler, $context, $codec): mixed {
-                $executed = true;
-
-                // Expose the driver's context (e.g. a CycleContext with the transactional connection)
-                // so the action can inject IdempotencyContext and narrow to it.
-                return $codec->encode($this->dispatch($operation, $handler, $context));
-            },
-            new ExecuteOptions($attribute->lockTtl, $attribute->ttl),
+        $storage = $attribute->storage;
+        $call = new IdempotencyCall(
+            context: $context,
+            // Expose the driver's context (e.g. a CycleContext with the transactional connection) so the
+            // action can inject IdempotencyContext and narrow to it.
+            operation: fn(IdempotencyContext $operation): mixed => $this->dispatch($operation, $handler, $context),
+            options: new ExecuteOptions($attribute->lockTtl, $attribute->ttl),
+            key: $this->keyFromArguments($attribute, $context),
         );
 
-        return $codec->decorate($codec->decode($cached), $key, replayed: !$executed);
+        return $this->pipeline()->process(
+            $call,
+            fn(IdempotencyCall $c): mixed => $this->registry->get($storage)->execute(
+                $c->key ?? throw new NonDeterministicKeyException(
+                    'No idempotency key could be resolved for the request.',
+                ),
+                $c->operation,
+                $c->options,
+            ),
+        );
+    }
+
+    /**
+     * Assemble this transport's resolution stack from config, resolving each middleware via the container.
+     *
+     * @return Pipeline<IdempotencyCall>
+     */
+    private function pipeline(): Pipeline
+    {
+        $middleware = [];
+        foreach ($this->config->getTransport($this->transport) as $class) {
+            $instance = $this->container->get($class);
+            \assert($instance instanceof ResolutionMiddleware);
+            $middleware[] = $instance;
+        }
+
+        /** @var Pipeline<IdempotencyCall> */
+        return new Pipeline(...$middleware);
+    }
+
+    /**
+     * Resolve the key from the attribute's arg-path (dot-notation over the call arguments), or null when
+     * absent — letting a transport middleware extract it instead.
+     *
+     * @return non-empty-string|null
+     */
+    private function keyFromArguments(Idempotent $attribute, CallContextInterface $context): ?string
+    {
+        if ($attribute->key === null) {
+            return null;
+        }
+
+        $raw = $this->dotGet($context->getArguments(), $attribute->key);
+
+        return $raw === null ? null : $this->keys->resolve($raw);
     }
 
     /**
@@ -114,16 +156,6 @@ final class IdempotencyInterceptor implements InterceptorInterface
         return null;
     }
 
-    private function material(Idempotent $attribute, CallContextInterface $context): ?string
-    {
-        $material = $attribute->key === null
-            ? null
-            : $this->dotGet($context->getArguments(), $attribute->key);
-
-        // No explicit key in the arguments → let the transport's source extract it from the context.
-        return $material ?? $this->scoped(KeySourceInterface::class)->extract($context);
-    }
-
     /**
      * @param array<array-key, mixed> $data
      * @param string $path dot-notation path
@@ -148,22 +180,5 @@ final class IdempotencyInterceptor implements InterceptorInterface
         }
 
         return \is_scalar($cursor) ? (string) $cursor : null;
-    }
-
-    /**
-     * Resolve a transport-specific service from the active scope (falling back to the root container),
-     * so the right per-scope binding is used at call time without a proxy.
-     *
-     * @template T of object
-     * @param class-string<T> $id
-     * @return T
-     */
-    private function scoped(string $id): object
-    {
-        $container = ContainerScope::getContainer() ?? $this->container;
-        $service = $container->get($id);
-        \assert($service instanceof $id);
-
-        return $service;
     }
 }

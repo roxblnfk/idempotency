@@ -19,7 +19,7 @@ use Spiral\Idempotency\Exception\NonDeterministicKeyException;
 interface KeyResolverInterface
 {
     /**
-     * @param string|null $raw raw key material from a {@see KeySourceInterface}
+     * @param string|null $raw raw key material extracted from the transport by a resolution middleware
      * @param non-empty-string|null $parentKey parent key for hierarchical composition
      * @return non-empty-string
      * @throws NonDeterministicKeyException if the raw material is unfit for a stable key

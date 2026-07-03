@@ -41,4 +41,14 @@ final readonly class IdempotencyCall
     {
         return new self($this->context, $this->operation, $this->options, $key);
     }
+
+    /**
+     * Replace the operation, e.g. to wrap it so its result is encoded before the handler caches it.
+     *
+     * @param \Closure(IdempotencyContext): mixed $operation
+     */
+    public function withOperation(\Closure $operation): self
+    {
+        return new self($this->context, $operation, $this->options, $this->key);
+    }
 }

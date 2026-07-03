@@ -9,14 +9,13 @@ use Psr\Container\ContainerInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Spiral\Idempotency\Attribute\Idempotent;
+use Spiral\Idempotency\Config\IdempotencyConfig;
 use Spiral\Idempotency\Guarantee;
-use Spiral\Idempotency\Http\HttpKeySource;
+use Spiral\Idempotency\Http\HttpKeyMiddleware;
+use Spiral\Idempotency\Http\HttpOutcomeMiddleware;
 use Spiral\Idempotency\IdempotencyRegistry;
 use Spiral\Idempotency\Interceptor\IdempotencyInterceptor;
-use Spiral\Idempotency\Http\HttpResultCodec;
 use Spiral\Idempotency\Internal\Key\KeyResolver;
-use Spiral\Idempotency\KeySourceInterface;
-use Spiral\Idempotency\ResultCodecInterface;
 use Spiral\Idempotency\Internal\Lease\LeaseIdempotency;
 use Spiral\Idempotency\Internal\Lease\LeaseManager;
 use Spiral\Idempotency\Internal\Lease\Storage\InMemoryLeaseStorage;
@@ -88,29 +87,41 @@ final class IdempotencyInterceptorTest
         $registry = new IdempotencyRegistry();
         $registry->register(
             'http',
-            new LeaseIdempotency(new LeaseManager(new InMemoryLeaseStorage($clock), $clock), new Pipeline(), lockTtl: 30, retentionTtl: 3600),
+            new LeaseIdempotency(
+                new LeaseManager(new InMemoryLeaseStorage($clock), $clock),
+                new Pipeline(),
+                lockTtl: 30,
+                retentionTtl: 3600,
+            ),
             Guarantee::AtLeastOnce,
         );
 
+        // Container resolves the HTTP resolution middleware named in the config stack.
         $container = new class($this->psr17) implements ContainerInterface {
             public function __construct(private readonly Psr17Factory $psr17) {}
 
             public function get(string $id): object
             {
                 return match ($id) {
-                    KeySourceInterface::class => new HttpKeySource(),
-                    ResultCodecInterface::class => new HttpResultCodec($this->psr17, $this->psr17),
+                    HttpKeyMiddleware::class => new HttpKeyMiddleware(new KeyResolver()),
+                    HttpOutcomeMiddleware::class => new HttpOutcomeMiddleware($this->psr17, $this->psr17),
                     default => throw new \LogicException("Unexpected service {$id}"),
                 };
             }
 
             public function has(string $id): bool
             {
-                return \in_array($id, [KeySourceInterface::class, ResultCodecInterface::class], true);
+                return \in_array($id, [HttpKeyMiddleware::class, HttpOutcomeMiddleware::class], true);
             }
         };
 
-        return new IdempotencyInterceptor($registry, new KeyResolver(), $container);
+        $config = new IdempotencyConfig([
+            'default' => 'http',
+            'storages' => [],
+            'transports' => ['http' => [HttpKeyMiddleware::class, HttpOutcomeMiddleware::class]],
+        ]);
+
+        return new IdempotencyInterceptor($registry, new KeyResolver(), $container, $config, 'http');
     }
 
     /**
@@ -167,7 +178,9 @@ final class IdempotencyInterceptorTest
 
         $request = $this->psr17->createServerRequest('POST', '/charge')->withParsedBody(['key' => 'from-body']);
 
+        /** @var ResponseInterface $first */
         $first = $interceptor->intercept($this->context('withKey', [], $request), $handler);
+        /** @var ResponseInterface $second */
         $second = $interceptor->intercept($this->context('withKey', [], $request), $handler);
 
         Assert::same($handler->calls, 1);
