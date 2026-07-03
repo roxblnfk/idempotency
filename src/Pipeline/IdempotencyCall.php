@@ -23,7 +23,7 @@ use Spiral\Idempotency\IdempotencyContext;
 final readonly class IdempotencyCall
 {
     /**
-     * @param mixed $context transport object the head middleware extract the key from
+     * @param mixed $context transport object the resolution middleware extract the key from
      * @param \Closure(IdempotencyContext): mixed $operation the business function, run under the guarantee
      * @param non-empty-string|null $key resolved idempotency key; null until a resolver middleware sets it
      */
