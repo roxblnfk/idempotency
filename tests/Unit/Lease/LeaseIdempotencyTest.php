@@ -15,6 +15,8 @@ use Spiral\Idempotency\Internal\Pipeline\DefaultFailureClassifier;
 use Spiral\Idempotency\Lease\AcquireResult;
 use Spiral\Idempotency\Lease\Acquired;
 use Spiral\Idempotency\Lease\LeaseManagerInterface;
+use Spiral\Idempotency\Pipeline\Middleware\ClassifierMiddleware;
+use Spiral\Idempotency\Pipeline\Pipeline;
 use Spiral\Idempotency\Tests\Support\MutableClock;
 use Testo\Assert;
 use Testo\Codecov\Covers;
@@ -28,9 +30,11 @@ final class LeaseIdempotencyTest
     private function driver(?MutableClock $clock = null, ?DefaultFailureClassifier $classifier = null): LeaseIdempotency
     {
         $clock ??= new MutableClock();
+        $classifier ??= new DefaultFailureClassifier();
         $manager = new LeaseManager(new InMemoryLeaseStorage($clock), $clock);
+        $execution = new Pipeline(new ClassifierMiddleware($classifier));
 
-        return new LeaseIdempotency($manager, lockTtl: 30, retentionTtl: 3600, classifier: $classifier);
+        return new LeaseIdempotency($manager, $execution, lockTtl: 30, retentionTtl: 3600, classifier: $classifier);
     }
 
     public function executesAndReturnsResult(): void
@@ -159,7 +163,7 @@ final class LeaseIdempotencyTest
     public function perCallOptionsOverrideConfiguredTtls(): void
     {
         $manager = $this->capturingManager();
-        $driver = new LeaseIdempotency($manager, lockTtl: 30, retentionTtl: 3600);
+        $driver = new LeaseIdempotency($manager, new Pipeline(), lockTtl: 30, retentionTtl: 3600);
 
         $driver->execute('k', static fn(): string => 'x', new ExecuteOptions(lockTtl: 5, ttl: 99));
 
@@ -170,7 +174,7 @@ final class LeaseIdempotencyTest
     public function absentOptionsFallBackToConfiguredTtls(): void
     {
         $manager = $this->capturingManager();
-        $driver = new LeaseIdempotency($manager, lockTtl: 30, retentionTtl: 3600);
+        $driver = new LeaseIdempotency($manager, new Pipeline(), lockTtl: 30, retentionTtl: 3600);
 
         // No options at all, then options whose fields are null — both fall back to the config defaults.
         $driver->execute('k', static fn(): string => 'x');
@@ -214,7 +218,7 @@ final class LeaseIdempotencyTest
     {
         $clock = new MutableClock();
         $manager = new LeaseManager(new InMemoryLeaseStorage($clock), $clock);
-        $driver = new LeaseIdempotency($manager, lockTtl: 30, retentionTtl: 3600);
+        $driver = new LeaseIdempotency($manager, new Pipeline(), lockTtl: 30, retentionTtl: 3600);
 
         // Occupy the key with an in-flight PROCESSING lease held by "someone else".
         $manager->acquire('k', 30);

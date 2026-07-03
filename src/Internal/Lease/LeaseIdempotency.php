@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Spiral\Idempotency\Internal\Lease;
 
 use Spiral\Idempotency\Exception\CachedDomainFailureException;
+use Spiral\Idempotency\Exception\ClassifiedException;
 use Spiral\Idempotency\Exception\IdempotencyException;
 use Spiral\Idempotency\Exception\LockedException;
 use Spiral\Idempotency\ExecuteOptions;
@@ -16,21 +17,24 @@ use Spiral\Idempotency\Lease\Acquired;
 use Spiral\Idempotency\Lease\AlreadyCompleted;
 use Spiral\Idempotency\Lease\LeaseManagerInterface;
 use Spiral\Idempotency\Lease\Locked;
+use Spiral\Idempotency\Pipeline\ExecutionCall;
 use Spiral\Idempotency\Pipeline\FailureClassifierInterface;
 use Spiral\Idempotency\Pipeline\FailureKind;
+use Spiral\Idempotency\Pipeline\Pipeline;
 use Spiral\Serializer\Serializer\PhpSerializer;
 use Spiral\Serializer\SerializerInterface;
 
 /**
- * Batteries-included AtLeastOnce driver: wraps the operation in lease + CAS via a
- * {@see LeaseManagerInterface}, serializes the result through a {@see SerializerInterface}, and
- * classifies failures with a {@see FailureClassifierInterface}.
+ * The AtLeastOnce lease handler (the boundary between the two pipelines, spec-pipeline §0): it owns
+ * `acquire` + the guaranteed terminal transition, and runs the operation through the
+ * {@see $execution} pipeline (classify / retry / ... ) in between.
  *
- * This bundles the terminal/classify behaviour that the framework integration would otherwise split
- * across middlewares; the decomposition into separate interceptors is the transport
- * layer's concern and reuses the very same primitives.
+ * Failure classification lives in the execution pipeline (a {@see \Spiral\Idempotency\Pipeline\Middleware\ClassifierMiddleware}),
+ * which rethrows a {@see ClassifiedException} carrying the {@see FailureKind}; this handler reads that
+ * kind to pick the terminal transition. When no classifier ran (bare throwable), it falls back to its
+ * own {@see $classifier}, so the handler stays correct with or without that middleware.
  *
- * @internal Built per storage alias by the bootloader; consumers resolve {@see IdempotencyInterface}
+ * @internal Built per storage alias by the factory; consumers resolve {@see IdempotencyInterface}
  *           from the {@see \Spiral\Idempotency\IdempotencyRegistry}. Not part of the public API.
  */
 final readonly class LeaseIdempotency implements IdempotencyInterface, GuaranteeProviderInterface
@@ -39,12 +43,14 @@ final readonly class LeaseIdempotency implements IdempotencyInterface, Guarantee
     private FailureClassifierInterface $classifier;
 
     /**
+     * @param Pipeline<ExecutionCall> $execution wraps the operation (classify / retry / ...)
      * @param int<1, max> $lockTtl PROCESSING lock TTL, seconds (short)
      * @param int<1, max> $retentionTtl COMPLETED retention TTL, seconds (long)
      * @param positive-int $acquireRetryLimit bound on AcquireRetry loops
      */
     public function __construct(
         private LeaseManagerInterface $manager,
+        private Pipeline $execution,
         private int $lockTtl = 30,
         private int $retentionTtl = 86400,
         ?SerializerInterface $serializer = null,
@@ -62,17 +68,18 @@ final readonly class LeaseIdempotency implements IdempotencyInterface, Guarantee
 
     public function execute(string $key, \Closure $operation, ?ExecuteOptions $options = null): mixed
     {
+        $options ??= new ExecuteOptions();
         /** @var int<1, max> $lockTtl */
-        $lockTtl = $options?->lockTtl ?? $this->lockTtl;
+        $lockTtl = $options->lockTtl ?? $this->lockTtl;
         /** @var int<1, max> $retentionTtl */
-        $retentionTtl = $options?->ttl ?? $this->retentionTtl;
+        $retentionTtl = $options->ttl ?? $this->retentionTtl;
 
         $attempts = 0;
         do {
             $result = $this->manager->acquire($key, $lockTtl);
 
             if ($result instanceof Acquired) {
-                return $this->run($result, $operation, $retentionTtl);
+                return $this->run($result, $operation, $options, $retentionTtl);
             }
 
             if ($result instanceof AlreadyCompleted) {
@@ -96,15 +103,19 @@ final readonly class LeaseIdempotency implements IdempotencyInterface, Guarantee
     /**
      * @param int<1, max> $retentionTtl
      */
-    private function run(Acquired $lease, \Closure $operation, int $retentionTtl): mixed
+    private function run(Acquired $lease, \Closure $operation, ExecuteOptions $options, int $retentionTtl): mixed
     {
-        $context = new LeaseContext($lease->key);
+        $call = new ExecutionCall(new LeaseContext($lease->key), $operation, $options);
 
         try {
-            $value = $operation($context);
+            $value = $this->execution->process(
+                $call,
+                static fn(ExecutionCall $c): mixed => ($c->operation)($c->context),
+            );
         } catch (\Throwable $e) {
             $this->terminateFailure($lease, $e, $retentionTtl);
-            throw $e;
+            // Surface the original throwable, not the ClassifiedException wrapper.
+            throw $e instanceof ClassifiedException ? ($e->getPrevious() ?? $e) : $e;
         }
 
         $this->manager->complete($lease->key, $lease->token, true, $this->encode($value), $retentionTtl);
@@ -117,13 +128,18 @@ final readonly class LeaseIdempotency implements IdempotencyInterface, Guarantee
      */
     private function terminateFailure(Acquired $lease, \Throwable $e, int $retentionTtl): void
     {
-        match ($this->classifier->classify($e)) {
+        // The kind comes from the classifier middleware (via ClassifiedException); fall back to our own
+        // classifier when the operation threw a bare throwable (no classifier middleware in the stack).
+        $original = $e instanceof ClassifiedException ? ($e->getPrevious() ?? $e) : $e;
+        $kind = $e instanceof ClassifiedException ? $e->kind : $this->classifier->classify($e);
+
+        match ($kind) {
             // Domain: a valid (negative) outcome — cache a lightweight snapshot for idempotent replay.
             FailureKind::Domain => $this->manager->complete(
                 $lease->key,
                 $lease->token,
                 false,
-                $this->encodeFailure($e),
+                $this->encodeFailure($original),
                 $retentionTtl,
             ),
             // Bug: unrecoverable, do not re-enqueue; report happens outside.

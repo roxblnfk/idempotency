@@ -20,6 +20,7 @@ use Spiral\Idempotency\ResultCodecInterface;
 use Spiral\Idempotency\Internal\Lease\LeaseIdempotency;
 use Spiral\Idempotency\Internal\Lease\LeaseManager;
 use Spiral\Idempotency\Internal\Lease\Storage\InMemoryLeaseStorage;
+use Spiral\Idempotency\Pipeline\Pipeline;
 use Spiral\Idempotency\Tests\Support\MutableClock;
 use Spiral\Interceptors\Context\CallContext;
 use Spiral\Interceptors\Context\CallContextInterface;
@@ -87,7 +88,7 @@ final class IdempotencyInterceptorTest
         $registry = new IdempotencyRegistry();
         $registry->register(
             'http',
-            new LeaseIdempotency(new LeaseManager(new InMemoryLeaseStorage($clock), $clock), lockTtl: 30, retentionTtl: 3600),
+            new LeaseIdempotency(new LeaseManager(new InMemoryLeaseStorage($clock), $clock), new Pipeline(), lockTtl: 30, retentionTtl: 3600),
             Guarantee::AtLeastOnce,
         );
 

@@ -11,6 +11,8 @@ use Spiral\Idempotency\Exception\MisconfigurationException;
 use Spiral\Idempotency\IdempotencyInterface;
 use Spiral\Idempotency\Internal\Lease\LeaseIdempotency;
 use Spiral\Idempotency\Internal\Lease\LeaseManager;
+use Spiral\Idempotency\Pipeline\Middleware\ClassifierMiddleware;
+use Spiral\Idempotency\Pipeline\Pipeline;
 use Spiral\Idempotency\StorageFactoryInterface;
 use Spiral\Idempotency\StorageServices;
 
@@ -39,12 +41,16 @@ final class CycleLeaseFactory implements StorageFactoryInterface
 
         $database = $this->databases->database($config->connection);
 
+        /** @var Pipeline<\Spiral\Idempotency\Pipeline\ExecutionCall> $execution */
+        $execution = new Pipeline(new ClassifierMiddleware($services->classifier));
+
         return new LeaseIdempotency(
             new LeaseManager(
                 new CycleLeaseStorage($database, $services->clock, $config->table),
                 $services->clock,
                 $services->tokens,
             ),
+            $execution,
             $config->lockTtl,
             $config->retentionTtl,
             $services->serializer,
