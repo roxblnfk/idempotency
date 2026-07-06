@@ -5,8 +5,9 @@ declare(strict_types=1);
 namespace Spiral\Idempotency\Interceptor;
 
 use Psr\Container\ContainerInterface;
-use Spiral\Core\BinderInterface;
+use Spiral\Core\Container;
 use Spiral\Core\ContainerScope;
+use Spiral\Core\Scope;
 use Spiral\Idempotency\Attribute\Idempotent;
 use Spiral\Idempotency\Config\IdempotencyConfig;
 use Spiral\Idempotency\Exception\NonDeterministicKeyException;
@@ -120,7 +121,12 @@ final class IdempotencyInterceptor implements InterceptorInterface
     /**
      * Run the action with the active {@see IdempotencyContext} bound, so it can be injected into the
      * controller (and narrowed to a driver contract such as
-     * {@see \Spiral\Idempotency\Driver\Cycle\CycleContext}). The binding is scoped to this call.
+     * {@see \Spiral\Idempotency\Driver\Cycle\CycleContext}).
+     *
+     * Uses an isolated child scope: the binding lives only in a fresh nested container that is destroyed
+     * on return — no mutation of the (possibly root) container, no cross-request leak, async-safe. If the
+     * active container has no scope support (e.g. a bare PSR container), the action runs without the
+     * binding.
      */
     private function dispatch(
         IdempotencyContext $operation,
@@ -128,16 +134,14 @@ final class IdempotencyInterceptor implements InterceptorInterface
         CallContextInterface $context,
     ): mixed {
         $container = ContainerScope::getContainer() ?? $this->container;
-        if (!$container instanceof BinderInterface) {
+        if (!$container instanceof Container) {
             return $handler->handle($context);
         }
 
-        $container->bindSingleton(IdempotencyContext::class, $operation);
-        try {
-            return $handler->handle($context);
-        } finally {
-            $container->removeBinding(IdempotencyContext::class);
-        }
+        return $container->runScope(
+            new Scope(bindings: [IdempotencyContext::class => $operation]),
+            fn(): mixed => $handler->handle($context),
+        );
     }
 
     private function attribute(?\ReflectionFunctionAbstract $reflection): ?Idempotent

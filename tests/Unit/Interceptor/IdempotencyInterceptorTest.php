@@ -6,19 +6,25 @@ namespace Spiral\Idempotency\Tests\Unit\Interceptor;
 
 use Nyholm\Psr7\Factory\Psr17Factory;
 use Psr\Container\ContainerInterface;
+use Psr\Http\Message\ResponseFactoryInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Message\StreamFactoryInterface;
+use Spiral\Core\Container;
+use Spiral\Core\ContainerScope;
 use Spiral\Idempotency\Attribute\Idempotent;
 use Spiral\Idempotency\Config\IdempotencyConfig;
 use Spiral\Idempotency\Guarantee;
 use Spiral\Idempotency\Http\HttpKeyMiddleware;
 use Spiral\Idempotency\Http\HttpOutcomeMiddleware;
+use Spiral\Idempotency\IdempotencyContext;
 use Spiral\Idempotency\IdempotencyRegistry;
 use Spiral\Idempotency\Interceptor\IdempotencyInterceptor;
 use Spiral\Idempotency\Internal\Key\KeyResolver;
 use Spiral\Idempotency\Internal\Lease\LeaseIdempotency;
 use Spiral\Idempotency\Internal\Lease\LeaseManager;
 use Spiral\Idempotency\Internal\Lease\Storage\InMemoryLeaseStorage;
+use Spiral\Idempotency\KeyResolverInterface;
 use Spiral\Idempotency\Pipeline\Pipeline;
 use Spiral\Idempotency\Tests\Support\MutableClock;
 use Spiral\Interceptors\Context\CallContext;
@@ -214,6 +220,53 @@ final class IdempotencyInterceptorTest
 
         // No attribute → no idempotency: the handler runs every time.
         Assert::same($handler->calls, 2);
+    }
+
+    public function bindsContextInIsolatedScopeWithoutLeaking(): void
+    {
+        // With a real Spiral container, dispatch() must expose IdempotencyContext to the action via an
+        // isolated child scope — visible inside, but not leaked into the root container afterwards.
+        $container = new Container();
+        $container->bindSingleton(KeyResolverInterface::class, new KeyResolver());
+        $container->bindSingleton(ResponseFactoryInterface::class, $this->psr17);
+        $container->bindSingleton(StreamFactoryInterface::class, $this->psr17);
+
+        $clock = new MutableClock();
+        $registry = new IdempotencyRegistry();
+        $registry->register(
+            'http',
+            new LeaseIdempotency(
+                new LeaseManager(new InMemoryLeaseStorage($clock), $clock),
+                new Pipeline(),
+                lockTtl: 30,
+                retentionTtl: 3600,
+            ),
+            Guarantee::AtLeastOnce,
+        );
+        $config = new IdempotencyConfig([
+            'transports' => ['http' => [HttpKeyMiddleware::class, HttpOutcomeMiddleware::class]],
+        ]);
+        $interceptor = new IdempotencyInterceptor($registry, new KeyResolver(), $container, $config, 'http');
+
+        $handler = new class($this->psr17) implements HandlerInterface {
+            public bool $contextVisible = false;
+
+            public function __construct(private readonly Psr17Factory $factory) {}
+
+            public function handle(CallContextInterface $context): mixed
+            {
+                $scope = ContainerScope::getContainer();
+                $this->contextVisible = $scope !== null && $scope->has(IdempotencyContext::class)
+                    && $scope->get(IdempotencyContext::class) instanceof IdempotencyContext;
+
+                return $this->factory->createResponse(200)->withBody($this->factory->createStream('ok'));
+            }
+        };
+
+        $interceptor->intercept($this->context('withKey', ['key' => 'z']), $handler);
+
+        Assert::true($handler->contextVisible);                    // injectable inside the scope
+        Assert::false($container->has(IdempotencyContext::class));  // not leaked into the root container
     }
 
     public function transientResponseIsNotCachedAndReRuns(): void
