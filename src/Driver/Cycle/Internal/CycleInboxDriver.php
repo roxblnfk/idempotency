@@ -17,6 +17,7 @@ use Spiral\Idempotency\ExecuteOptions;
 use Spiral\Idempotency\Guarantee;
 use Spiral\Idempotency\GuaranteeProviderInterface;
 use Spiral\Idempotency\IdempotencyInterface;
+use Spiral\Idempotency\Uncacheable;
 use Spiral\Serializer\Serializer\PhpSerializer;
 use Spiral\Serializer\SerializerInterface;
 
@@ -96,6 +97,12 @@ final readonly class CycleInboxDriver implements IdempotencyInterface, Guarantee
 
         // First time: run the side-effect inside this same transaction via the bound context.
         $value = $operation(new InboxContext($key, $db, $em));
+
+        // An Uncacheable marker ("safe to re-run") is not applicable here: the side-effect is already
+        // in this transaction and will commit. Unwrap and store/return the value like any other.
+        if ($value instanceof Uncacheable) {
+            $value = $value->value;
+        }
 
         if ($value !== null) {
             $db->update(

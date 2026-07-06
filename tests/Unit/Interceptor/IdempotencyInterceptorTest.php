@@ -57,14 +57,17 @@ final class CountingHandler implements HandlerInterface
 {
     public int $calls = 0;
 
-    public function __construct(private readonly Psr17Factory $factory) {}
+    public function __construct(
+        private readonly Psr17Factory $factory,
+        private readonly int $status = 200,
+    ) {}
 
     public function handle(CallContextInterface $context): mixed
     {
         ++$this->calls;
 
         return $this->factory
-            ->createResponse(200)
+            ->createResponse($this->status)
             ->withHeader('Content-Type', 'text/plain')
             ->withBody($this->factory->createStream('run#' . $this->calls));
     }
@@ -211,5 +214,22 @@ final class IdempotencyInterceptorTest
 
         // No attribute → no idempotency: the handler runs every time.
         Assert::same($handler->calls, 2);
+    }
+
+    public function transientResponseIsNotCachedAndReRuns(): void
+    {
+        $interceptor = $this->interceptor();
+        $handler = new CountingHandler($this->psr17, status: 503);
+
+        /** @var ResponseInterface $first */
+        $first = $interceptor->intercept($this->context('withKey', ['key' => 'x']), $handler);
+        /** @var ResponseInterface $second */
+        $second = $interceptor->intercept($this->context('withKey', ['key' => 'x']), $handler);
+
+        // 5xx is not cached (default policy): the key is released, so the second call re-runs.
+        Assert::same($handler->calls, 2);
+        Assert::same($first->getStatusCode(), 503);
+        Assert::same($second->getStatusCode(), 503);
+        Assert::same($second->getBody()->__toString(), 'run#2');
     }
 }

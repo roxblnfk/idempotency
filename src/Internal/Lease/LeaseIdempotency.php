@@ -21,6 +21,7 @@ use Spiral\Idempotency\Pipeline\ExecutionCall;
 use Spiral\Idempotency\Pipeline\FailureClassifierInterface;
 use Spiral\Idempotency\Pipeline\FailureKind;
 use Spiral\Idempotency\Pipeline\Pipeline;
+use Spiral\Idempotency\Uncacheable;
 use Spiral\Serializer\Serializer\PhpSerializer;
 use Spiral\Serializer\SerializerInterface;
 
@@ -116,6 +117,13 @@ final readonly class LeaseIdempotency implements IdempotencyInterface, Guarantee
             $this->terminateFailure($lease, $e, $retentionTtl);
             // Surface the original throwable, not the ClassifiedException wrapper.
             throw $e instanceof ClassifiedException ? ($e->getPrevious() ?? $e) : $e;
+        }
+
+        if ($value instanceof Uncacheable) {
+            // Transient outcome (e.g. 5xx): don't cache, release the key so a retry re-runs.
+            $this->manager->abort($lease->key, $lease->token);
+
+            return $value->value;
         }
 
         $this->manager->complete($lease->key, $lease->token, true, $this->encode($value), $retentionTtl);

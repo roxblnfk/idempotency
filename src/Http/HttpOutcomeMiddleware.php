@@ -12,6 +12,7 @@ use Spiral\Idempotency\IdempotencyContext;
 use Spiral\Idempotency\Lease\Locked;
 use Spiral\Idempotency\Pipeline\IdempotencyCall;
 use Spiral\Idempotency\Pipeline\ResolutionMiddleware;
+use Spiral\Idempotency\Uncacheable;
 
 /**
  * HTTP outcome middleware: maps the idempotent call to/from an HTTP response. Replaces the old
@@ -21,7 +22,9 @@ use Spiral\Idempotency\Pipeline\ResolutionMiddleware;
  *    (a PSR-7 response is not cleanly serializable);
  *  - rebuilds the response from the snapshot on the way out (via PSR-17 factories) and adds the
  *    `Idempotency-Key` / `Idempotency-Replay` headers;
- *  - turns a {@see LockedException} into `409 Conflict` + `Retry-After`.
+ *  - turns a {@see LockedException} into `409 Conflict` + `Retry-After`;
+ *  - wraps a non-cacheable response (default: status >= 500, transient) in {@see Uncacheable}, so the
+ *    lease handler releases the key and a retry re-runs instead of replaying the error forever.
  *
  * Sits inside the key middleware (so {@see IdempotencyCall::$key} is already resolved for the replay
  * header). Non-response results pass through untouched.
@@ -32,10 +35,21 @@ final readonly class HttpOutcomeMiddleware implements ResolutionMiddleware
 {
     private const SNAPSHOT = '__idempotency_http_response__';
 
+    /** @var \Closure(ResponseInterface): bool */
+    private \Closure $cacheable;
+
+    /**
+     * @param (\Closure(ResponseInterface): bool)|null $cacheable decides whether a response may be
+     *        cached; default: only status < 500 (transient 5xx are re-run, not replayed)
+     */
     public function __construct(
         private ResponseFactoryInterface $responses,
         private StreamFactoryInterface $streams,
-    ) {}
+        ?\Closure $cacheable = null,
+    ) {
+        $this->cacheable = $cacheable ?? static fn(ResponseInterface $response): bool
+            => $response->getStatusCode() < 500;
+    }
 
     public function process(IdempotencyCall $call, callable $next): mixed
     {
@@ -64,13 +78,15 @@ final readonly class HttpOutcomeMiddleware implements ResolutionMiddleware
             return $result;
         }
 
-        return [
+        $snapshot = [
             self::SNAPSHOT => true,
             'status' => $result->getStatusCode(),
             'reason' => $result->getReasonPhrase(),
             'headers' => $result->getHeaders(),
             'body' => (string) $result->getBody(),
         ];
+
+        return ($this->cacheable)($result) ? $snapshot : new Uncacheable($snapshot);
     }
 
     private function decode(mixed $cached): mixed

@@ -18,6 +18,7 @@ use Spiral\Idempotency\Lease\LeaseManagerInterface;
 use Spiral\Idempotency\Pipeline\Middleware\ClassifierMiddleware;
 use Spiral\Idempotency\Pipeline\Pipeline;
 use Spiral\Idempotency\Tests\Support\MutableClock;
+use Spiral\Idempotency\Uncacheable;
 use Testo\Assert;
 use Testo\Codecov\Covers;
 use Testo\Expect;
@@ -157,6 +158,24 @@ final class LeaseIdempotencyTest
             }
         }
 
+        Assert::same($calls, 2);
+    }
+
+    public function uncacheableResultReleasesKeyAndReRuns(): void
+    {
+        $driver = $this->driver();
+        $calls = 0;
+        $op = static function () use (&$calls): Uncacheable {
+            ++$calls;
+            return new Uncacheable('transient-' . $calls);
+        };
+
+        $first = $driver->execute('k', $op);
+        $second = $driver->execute('k', $op);
+
+        // Unwrapped value returned; not cached → key released → the operation runs again.
+        Assert::same($first, 'transient-1');
+        Assert::same($second, 'transient-2');
         Assert::same($calls, 2);
     }
 
