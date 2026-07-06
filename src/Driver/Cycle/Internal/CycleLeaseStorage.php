@@ -103,7 +103,14 @@ final class CycleLeaseStorage implements LeaseStorageInterface
             ['key' => $key, 'token' => $token, 'state' => LeaseState::Processing->value],
         )->run();
 
-        return $affected === 1;
+        if ($affected === 1) {
+            return true;
+        }
+
+        // MySQL's rowCount() reports *changed* rows, not *matched*: a renew that lands on the same
+        // `expire_time` (same second, same TTL) updates nothing and returns 0 even though we are still
+        // the owner. Confirm ownership by (key, token, state) to tell "not owner" from "unchanged".
+        return $this->ownsProcessing($key, $token);
     }
 
     public function read(string $key): ?StoredEntry
@@ -135,6 +142,23 @@ final class CycleLeaseStorage implements LeaseStorageInterface
             result: $row['result'] !== null ? (string) $row['result'] : null,
             expireTime: (new \DateTimeImmutable())->setTimestamp($expireTime),
         );
+    }
+
+    /**
+     * Do we still hold a PROCESSING lease under this token? Used to confirm a renew whose UPDATE matched
+     * but changed nothing (MySQL's changed-vs-matched rowCount).
+     */
+    private function ownsProcessing(string $key, string $token): bool
+    {
+        $row = $this->db->select('key')
+            ->from($this->table)
+            ->where('key', $key)
+            ->where('token', $token)
+            ->where('state', LeaseState::Processing->value)
+            ->run()
+            ->fetch();
+
+        return \is_array($row);
     }
 
     private function runInsert(InsertQuery $insert): int

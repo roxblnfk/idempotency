@@ -141,6 +141,19 @@ abstract class CycleStorageTestCase extends DatabaseTestCase
         Assert::same($storage->read($key)?->state, LeaseState::Processing);
     }
 
+    public function renewIsNoOpSafeWithinSameSecond(): void
+    {
+        // MySQL rowCount() reports *changed* rows: renewing to the same expire_time (clock not advanced,
+        // same TTL) changes nothing and returns 0 — yet we are still the owner, so renew must succeed.
+        $key = $this->key();
+        $clock = new MutableClock();
+        $storage = new CycleLeaseStorage($this->db(), $clock);
+        $storage->acquire($key, 'tok', 30);
+
+        Assert::true($storage->renew($key, 'tok', 30));  // no-op update, still owned
+        Assert::false($storage->renew($key, 'other', 30)); // a non-owner token still fails
+    }
+
     public function managerFlowAcquireCompleteReplay(): void
     {
         $key = $this->key();
