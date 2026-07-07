@@ -26,14 +26,24 @@ use Spiral\Idempotency\Uncacheable;
  *  - wraps a non-cacheable response (default: status >= 500, transient) in {@see Uncacheable}, so the
  *    lease handler releases the key and a retry re-runs instead of replaying the error forever.
  *
- * Sits inside the key middleware (so {@see IdempotencyCall::$key} is already resolved for the replay
- * header). Non-response results pass through untouched.
+ * Order-independent w.r.t. the key middleware: the resolved key travels in the response snapshot (read
+ * from {@see IdempotencyContext::getKey()} inside the operation), so the replay header survives even if
+ * this middleware runs outside the key middleware. Recommended as the OUTERMOST http middleware, so it
+ * also maps key-resolution failures raised by the inner middleware. Non-response results pass through
+ * untouched.
  *
  * @api
  */
 final readonly class HttpOutcomeMiddleware implements ResolutionMiddleware
 {
     private const SNAPSHOT = '__idempotency_http_response__';
+
+    /**
+     * Hop-by-hop / body-framing headers that must not survive into a replayed response: they describe
+     * the upstream connection, not the payload, and the emitter re-derives `Content-Length` from the
+     * rebuilt body.
+     */
+    private const SKIP_HEADERS = ['content-length', 'transfer-encoding', 'connection'];
 
     /** @var \Closure(ResponseInterface): bool */
     private \Closure $cacheable;
@@ -56,7 +66,7 @@ final readonly class HttpOutcomeMiddleware implements ResolutionMiddleware
         $executed = false;
         $encoded = $call->withOperation(function (IdempotencyContext $ctx) use (&$executed, $call): mixed {
             $executed = true;
-            return $this->encode(($call->operation)($ctx));
+            return $this->encode(($call->operation)($ctx), $ctx->getKey());
         });
 
         try {
@@ -65,24 +75,39 @@ final readonly class HttpOutcomeMiddleware implements ResolutionMiddleware
             return $this->conflict($e->lock);
         }
 
+        // Read the key from the snapshot (before decode() turns it back into a bare Response), falling
+        // back to the call's key — so the replay header does not depend on this middleware's position.
+        $key = \is_array($cached) ? ($cached['key'] ?? null) : null;
+        $key ??= $call->key;
+
         $result = $this->decode($cached);
 
-        return $result instanceof ResponseInterface && $call->key !== null
-            ? $this->decorate($result, $call->key, replayed: !$executed)
+        return $result instanceof ResponseInterface && \is_string($key) && $key !== ''
+            ? $this->decorate($result, $key, replayed: !$executed)
             : $result;
     }
 
-    private function encode(mixed $result): mixed
+    /**
+     * @param non-empty-string $key
+     */
+    private function encode(mixed $result, string $key): mixed
     {
         if (!$result instanceof ResponseInterface) {
             return $result;
         }
 
+        $headers = \array_filter(
+            $result->getHeaders(),
+            static fn(string $name): bool => !\in_array(\strtolower($name), self::SKIP_HEADERS, true),
+            ARRAY_FILTER_USE_KEY,
+        );
+
         $snapshot = [
             self::SNAPSHOT => true,
+            'key' => $key,
             'status' => $result->getStatusCode(),
             'reason' => $result->getReasonPhrase(),
-            'headers' => $result->getHeaders(),
+            'headers' => $headers,
             'body' => (string) $result->getBody(),
         ];
 
@@ -124,6 +149,7 @@ final readonly class HttpOutcomeMiddleware implements ResolutionMiddleware
 
         return $this->responses->createResponse(409)
             ->withHeader('Content-Type', 'application/json')
+            ->withHeader('Idempotency-Key', $lock->key)
             ->withHeader('Retry-After', (string) $lock->retryAfter)
             ->withBody($this->streams->createStream($payload));
     }

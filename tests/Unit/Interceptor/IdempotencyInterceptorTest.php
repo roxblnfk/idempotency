@@ -90,18 +90,18 @@ final class IdempotencyInterceptorTest
         $this->psr17 = new Psr17Factory();
     }
 
-    private function interceptor(): IdempotencyInterceptor
+    /**
+     * @param list<class-string>|null $stack resolution-middleware order (defaults to the canonical
+     *        [outcome, key] — outcome outermost)
+     */
+    private function interceptor(?array $stack = null, ?LeaseManager $manager = null): IdempotencyInterceptor
     {
         $clock = new MutableClock();
+        $manager ??= new LeaseManager(new InMemoryLeaseStorage($clock), $clock);
         $registry = new IdempotencyRegistry();
         $registry->register(
             'http',
-            new LeaseIdempotency(
-                new LeaseManager(new InMemoryLeaseStorage($clock), $clock),
-                new Pipeline(),
-                lockTtl: 30,
-                retentionTtl: 3600,
-            ),
+            new LeaseIdempotency($manager, new Pipeline(), lockTtl: 30, retentionTtl: 3600),
             Guarantee::AtLeastOnce,
         );
 
@@ -127,7 +127,7 @@ final class IdempotencyInterceptorTest
         $config = new IdempotencyConfig([
             'default' => 'http',
             'storages' => [],
-            'transports' => ['http' => [HttpKeyMiddleware::class, HttpOutcomeMiddleware::class]],
+            'transports' => ['http' => $stack ?? [HttpOutcomeMiddleware::class, HttpKeyMiddleware::class]],
         ]);
 
         return new IdempotencyInterceptor($registry, new KeyResolver(), $container, $config, 'http');
@@ -244,7 +244,7 @@ final class IdempotencyInterceptorTest
             Guarantee::AtLeastOnce,
         );
         $config = new IdempotencyConfig([
-            'transports' => ['http' => [HttpKeyMiddleware::class, HttpOutcomeMiddleware::class]],
+            'transports' => ['http' => [HttpOutcomeMiddleware::class, HttpKeyMiddleware::class]],
         ]);
         $interceptor = new IdempotencyInterceptor($registry, new KeyResolver(), $container, $config, 'http');
 
@@ -284,5 +284,87 @@ final class IdempotencyInterceptorTest
         Assert::same($first->getStatusCode(), 503);
         Assert::same($second->getStatusCode(), 503);
         Assert::same($second->getBody()->__toString(), 'run#2');
+    }
+
+    public function headersSurviveEitherMiddlewareOrder(): void
+    {
+        // The replay headers must not depend on whether outcome sits inside or outside the key middleware.
+        $stacks = [
+            'outcome-outer' => [HttpOutcomeMiddleware::class, HttpKeyMiddleware::class],
+            'key-outer' => [HttpKeyMiddleware::class, HttpOutcomeMiddleware::class],
+        ];
+
+        foreach ($stacks as $label => $stack) {
+            $interceptor = $this->interceptor($stack);
+            $handler = new CountingHandler($this->psr17);
+            $key = 'order-' . $label;
+
+            /** @var ResponseInterface $first */
+            $first = $interceptor->intercept($this->context('withKey', ['key' => $key]), $handler);
+            /** @var ResponseInterface $second */
+            $second = $interceptor->intercept($this->context('withKey', ['key' => $key]), $handler);
+
+            Assert::same($handler->calls, 1, $label);
+            Assert::same($first->getHeaderLine('Idempotency-Key'), $key, $label);
+            Assert::same($first->getHeaderLine('Idempotency-Replay'), 'false', $label);
+            Assert::same($second->getHeaderLine('Idempotency-Key'), $key, $label);
+            Assert::same($second->getHeaderLine('Idempotency-Replay'), 'true', $label);
+        }
+    }
+
+    public function conflictResponseCarriesIdempotencyKey(): void
+    {
+        $clock = new MutableClock();
+        $manager = new LeaseManager(new InMemoryLeaseStorage($clock), $clock);
+
+        // Occupy the key with an in-flight PROCESSING lease held by "someone else".
+        $manager->acquire('busy-key', 30);
+
+        $interceptor = $this->interceptor(manager: $manager);
+        $handler = new CountingHandler($this->psr17);
+
+        /** @var ResponseInterface $response */
+        $response = $interceptor->intercept($this->context('withKey', ['key' => 'busy-key']), $handler);
+
+        Assert::same($response->getStatusCode(), 409);
+        Assert::same($response->getHeaderLine('Idempotency-Key'), 'busy-key');
+        Assert::same($handler->calls, 0);
+    }
+
+    public function replayDropsHopByHopHeaders(): void
+    {
+        $interceptor = $this->interceptor();
+
+        // Handler emits body-framing / hop-by-hop headers that must not survive into a replay.
+        $handler = new class($this->psr17) implements HandlerInterface {
+            public int $calls = 0;
+
+            public function __construct(private readonly Psr17Factory $factory) {}
+
+            public function handle(CallContextInterface $context): mixed
+            {
+                ++$this->calls;
+
+                return $this->factory
+                    ->createResponse(200)
+                    ->withHeader('Content-Type', 'text/plain')
+                    ->withHeader('Transfer-Encoding', 'chunked')
+                    ->withHeader('Content-Length', '4')
+                    ->withHeader('Connection', 'keep-alive')
+                    ->withBody($this->factory->createStream('body'));
+            }
+        };
+
+        $interceptor->intercept($this->context('withKey', ['key' => 'hbh']), $handler);
+        /** @var ResponseInterface $replay */
+        $replay = $interceptor->intercept($this->context('withKey', ['key' => 'hbh']), $handler);
+
+        Assert::same($handler->calls, 1);
+        Assert::same($replay->getHeaderLine('Idempotency-Replay'), 'true');
+        Assert::false($replay->hasHeader('Transfer-Encoding'));
+        Assert::false($replay->hasHeader('Connection'));
+        // Body survives intact; the emitter re-derives Content-Length from it.
+        Assert::same((string) $replay->getBody(), 'body');
+        Assert::same($replay->getHeaderLine('Content-Type'), 'text/plain');
     }
 }

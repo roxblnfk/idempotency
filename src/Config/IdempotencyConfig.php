@@ -14,12 +14,19 @@ use Spiral\Idempotency\Exception\MisconfigurationException;
  * ```php
  * use Spiral\Idempotency\Driver\Cycle\CycleInboxConfig;
  * use Spiral\Idempotency\Driver\Cycle\CycleLeaseConfig;
+ * use Spiral\Idempotency\Http\HttpKeyMiddleware;
+ * use Spiral\Idempotency\Http\HttpOutcomeMiddleware;
  *
  * return [
  *     'default' => 'orders',
  *     'storages' => [
  *         'orders'        => new CycleInboxConfig(connection: 'default', table: 'inbox'),
  *         'notifications' => new CycleLeaseConfig(connection: 'default', lockTtl: 30, retentionTtl: 86400),
+ *     ],
+ *     // Per-transport resolution stack, outer → inner. The outcome middleware is outermost so it maps
+ *     // both the response and key-resolution failures raised by the inner key middleware.
+ *     'transports' => [
+ *         'http' => [HttpOutcomeMiddleware::class, HttpKeyMiddleware::class],
  *     ],
  * ];
  * ```
