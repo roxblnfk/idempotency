@@ -36,6 +36,7 @@ use Spiral\Idempotency\Lease\TokenFactoryInterface;
 use Spiral\Idempotency\Pipeline\Middleware\ClassifierMiddleware;
 use Spiral\Idempotency\Pipeline\Pipeline;
 use Spiral\Idempotency\Tests\Support\MutableClock;
+use Spiral\Idempotency\Uncacheable;
 use Spiral\Serializer\SerializerInterface;
 use Testo\Assert;
 use Testo\Codecov\Covers;
@@ -301,6 +302,31 @@ abstract class CycleStorageTestCase extends DatabaseTestCase
         Assert::same($driver->execute($key, $op), 'done');
         Assert::same($this->ledgerCount($key), 1);
         Assert::same($attempt, 2);
+    }
+
+    public function inboxUnwrapsUncacheableAndCommits(): void
+    {
+        $key = $this->key();
+        $driver = $this->inboxDriver();
+        $calls = 0;
+        $op = function (IdempotencyContext $c) use (&$calls, $key): Uncacheable {
+            ++$calls;
+            \assert($c instanceof CycleContext);
+            $c->database()->insert('ledger')->values(['note' => $key])->run();
+            return new Uncacheable('r1');
+        };
+
+        // First call: the inbox unwraps the Uncacheable to its value and COMMITs the side-effect with
+        // the dedup row (the ledger insert survives the transaction).
+        Assert::same($driver->execute($key, $op), 'r1');
+        Assert::same($this->ledgerCount($key), 1);
+
+        // Asymmetry with the lease driver: an Uncacheable does NOT re-run through the inbox. The
+        // side-effect is already committed, so the second call replays the cached 'r1' and the
+        // operation body never runs again.
+        Assert::same($driver->execute($key, $op), 'r1');
+        Assert::same($this->ledgerCount($key), 1);
+        Assert::same($calls, 1);
     }
 
     // ----------------------------------------------------------------- bootloader wiring

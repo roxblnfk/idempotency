@@ -7,6 +7,7 @@ namespace Spiral\Idempotency\Tests\Unit\Lease;
 use Psr\Log\AbstractLogger;
 use Psr\Log\LogLevel;
 use Spiral\Idempotency\Exception\CachedDomainFailureException;
+use Spiral\Idempotency\Exception\IdempotencyException;
 use Spiral\Idempotency\Exception\LeaseLostException;
 use Spiral\Idempotency\Exception\LockedException;
 use Spiral\Idempotency\ExecuteOptions;
@@ -430,5 +431,140 @@ final class LeaseIdempotencyTest
         Expect::exception(LockedException::class);
 
         $driver->execute('k', static fn(): string => 'never reached');
+    }
+
+    // ----------------------------------------------------------------- AcquireRetry loop bound
+
+    public function acquireRetryExhaustionThrows(): void
+    {
+        // The record keeps vanishing between the conditional insert and the conflict read, so every
+        // acquire() resolves to AcquireRetry — the loop must give up at the configured limit (3).
+        $storage = $this->alwaysRetryStorage();
+        $driver = new LeaseIdempotency(
+            new LeaseManager($storage, new MutableClock()),
+            new Pipeline(),
+        );
+
+        $calls = 0;
+        $op = static function () use (&$calls): string {
+            ++$calls;
+            return 'never reached';
+        };
+
+        try {
+            $driver->execute('k', $op);
+            Assert::fail('an exhausted AcquireRetry loop must throw');
+        } catch (IdempotencyException $e) {
+            Assert::string($e->getMessage())->contains('after 3 attempts');
+        }
+
+        // acquire() was attempted exactly acquireRetryLimit (default 3) times and the operation, which
+        // never got a lease, never ran.
+        Assert::same($storage->acquireCalls, 3);
+        Assert::same($calls, 0);
+    }
+
+    public function acquireRetrySucceedsMidLoop(): void
+    {
+        // The first acquire() misses (AcquireRetry); the second wins the lease — the loop must retry
+        // and then run the operation, returning its value.
+        $storage = $this->retryOnceThenAcquireStorage();
+        $driver = new LeaseIdempotency(
+            new LeaseManager($storage, new MutableClock()),
+            new Pipeline(),
+        );
+
+        $calls = 0;
+        $result = $driver->execute('k', static function () use (&$calls): string {
+            ++$calls;
+            return 'value';
+        });
+
+        Assert::same($result, 'value');
+        Assert::same($calls, 1);
+        Assert::same($storage->acquireCalls, 2);
+    }
+
+    /**
+     * A storage whose acquire() never succeeds and whose read() finds nothing — the manager maps that
+     * to a perpetual {@see \Spiral\Idempotency\Lease\AcquireRetry}. Counts acquire() attempts.
+     */
+    private function alwaysRetryStorage(): LeaseStorageInterface
+    {
+        return new class implements LeaseStorageInterface {
+            public int $acquireCalls = 0;
+
+            public function acquire(string $key, string $token, int $lockTtl): bool
+            {
+                ++$this->acquireCalls;
+                return false;
+            }
+
+            public function complete(string $key, string $token, bool $success, mixed $result, int $retentionTtl): bool
+            {
+                return false;
+            }
+
+            public function abort(string $key, string $token): bool
+            {
+                return false;
+            }
+
+            public function error(string $key, string $token): bool
+            {
+                return false;
+            }
+
+            public function renew(string $key, string $token, int $lockTtl): bool
+            {
+                return false;
+            }
+
+            public function read(string $key): ?StoredEntry
+            {
+                return null;
+            }
+        };
+    }
+
+    /**
+     * A storage that reports AcquireRetry on the first acquire() (miss + vanished read) and then grants
+     * the lease on the second — the positive exit of the retry loop.
+     */
+    private function retryOnceThenAcquireStorage(): LeaseStorageInterface
+    {
+        return new class implements LeaseStorageInterface {
+            public int $acquireCalls = 0;
+
+            public function acquire(string $key, string $token, int $lockTtl): bool
+            {
+                return ++$this->acquireCalls >= 2;
+            }
+
+            public function complete(string $key, string $token, bool $success, mixed $result, int $retentionTtl): bool
+            {
+                return true;
+            }
+
+            public function abort(string $key, string $token): bool
+            {
+                return true;
+            }
+
+            public function error(string $key, string $token): bool
+            {
+                return true;
+            }
+
+            public function renew(string $key, string $token, int $lockTtl): bool
+            {
+                return true;
+            }
+
+            public function read(string $key): ?StoredEntry
+            {
+                return null;
+            }
+        };
     }
 }
