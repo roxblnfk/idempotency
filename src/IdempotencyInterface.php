@@ -20,6 +20,13 @@ interface IdempotencyInterface
      * Run {@see $operation} idempotently under {@see $key}. On replay the cached result is returned
      * instead of executing the operation again.
      *
+     * This programmatic path takes the {@see $key} as the final, authoritative key — it is NOT
+     * namespaced automatically. Operation-identity namespacing (so the same client key on two endpoints
+     * does not collide) is applied only on the attribute/interceptor path via
+     * {@see \Spiral\Idempotency\Attribute\Idempotent::$scope}. A direct caller that needs the same
+     * isolation composes it itself, e.g. via {@see KeyResolverInterface::resolve()} (available as a
+     * service) with an explicit parent key.
+     *
      * @template T
      * @param non-empty-string $key
      * @param \Closure(IdempotencyContext): T $operation

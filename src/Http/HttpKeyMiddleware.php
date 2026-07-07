@@ -53,7 +53,9 @@ final readonly class HttpKeyMiddleware implements ResolutionMiddleware
                 $this->field,
             ));
 
-        return $next($call->withKey($this->resolver->resolve($raw)));
+        // The scope (operation identity by default) travels on the call; the transport stays agnostic of
+        // its format and just hands it to the resolver as the parent key so endpoints do not collide.
+        return $next($call->withKey($this->resolver->resolve($raw, $call->keyScope)));
     }
 
     private function extract(ServerRequestInterface $request): ?string

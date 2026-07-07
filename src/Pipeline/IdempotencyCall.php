@@ -26,12 +26,15 @@ final readonly class IdempotencyCall
      * @param mixed $context transport object the resolution middleware extract the key from
      * @param \Closure(IdempotencyContext): mixed $operation the business function, run under the guarantee
      * @param non-empty-string|null $key resolved idempotency key; null until a resolver middleware sets it
+     * @param non-empty-string|null $keyScope namespace mixed in as the resolver's `parentKey` when a
+     *        transport middleware derives {@see $key} from raw material; null = no namespacing
      */
     public function __construct(
         public mixed $context,
         public \Closure $operation,
         public ExecuteOptions $options,
         public ?string $key = null,
+        public ?string $keyScope = null,
     ) {}
 
     /**
@@ -39,7 +42,7 @@ final readonly class IdempotencyCall
      */
     public function withKey(string $key): self
     {
-        return new self($this->context, $this->operation, $this->options, $key);
+        return new self($this->context, $this->operation, $this->options, $key, $this->keyScope);
     }
 
     /**
@@ -49,6 +52,6 @@ final readonly class IdempotencyCall
      */
     public function withOperation(\Closure $operation): self
     {
-        return new self($this->context, $operation, $this->options, $this->key);
+        return new self($this->context, $operation, $this->options, $this->key, $this->keyScope);
     }
 }

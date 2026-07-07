@@ -61,6 +61,46 @@ final class AnnotatedFixture
     {
         throw new \LogicException('Not invoked directly.');
     }
+
+    // Two distinct endpoints sharing the 'http' storage alias, keyed from the header (no explicit key):
+    // default scope namespaces each by its own operation identity.
+    #[Idempotent(storage: 'http')]
+    public function endpointA(): ResponseInterface
+    {
+        throw new \LogicException('Not invoked directly.');
+    }
+
+    #[Idempotent(storage: 'http')]
+    public function endpointB(): ResponseInterface
+    {
+        throw new \LogicException('Not invoked directly.');
+    }
+
+    // Two endpoints that deliberately share one key space via an explicit scope name.
+    #[Idempotent(storage: 'http', scope: 'shared-op')]
+    public function sharedA(): ResponseInterface
+    {
+        throw new \LogicException('Not invoked directly.');
+    }
+
+    #[Idempotent(storage: 'http', scope: 'shared-op')]
+    public function sharedB(): ResponseInterface
+    {
+        throw new \LogicException('Not invoked directly.');
+    }
+
+    // Two endpoints opting out of namespacing into one global key space (pre-namespacing behaviour).
+    #[Idempotent(storage: 'http', scope: Idempotent::SCOPE_GLOBAL)]
+    public function globalA(): ResponseInterface
+    {
+        throw new \LogicException('Not invoked directly.');
+    }
+
+    #[Idempotent(storage: 'http', scope: Idempotent::SCOPE_GLOBAL)]
+    public function globalB(): ResponseInterface
+    {
+        throw new \LogicException('Not invoked directly.');
+    }
 }
 
 /**
@@ -210,7 +250,8 @@ final class IdempotencyInterceptorTest
         Assert::same((string) $second->getBody(), 'run#1');
         Assert::same($first->getHeaderLine('Idempotency-Replay'), 'false');
         Assert::same($second->getHeaderLine('Idempotency-Replay'), 'true');
-        Assert::same($second->getHeaderLine('Idempotency-Key'), 'abc');
+        // The response carries the FINAL (composite) key: operation identity + ':' separator + raw material.
+        Assert::same($second->getHeaderLine('Idempotency-Key'), AnnotatedFixture::class . '::withKey:abc');
     }
 
     public function differentKeysRunSeparately(): void
@@ -239,7 +280,8 @@ final class IdempotencyInterceptorTest
         $second = $interceptor->intercept($this->context('fromHeader', [], $request), $handler);
 
         Assert::same($handler->calls, 1);
-        Assert::same($first->getHeaderLine('Idempotency-Key'), 'from-body');
+        // Composite key: the transport middleware namespaces the body-supplied key by operation identity.
+        Assert::same($first->getHeaderLine('Idempotency-Key'), AnnotatedFixture::class . '::fromHeader:from-body');
         Assert::same($second->getHeaderLine('Idempotency-Replay'), 'true');
     }
 
@@ -347,6 +389,56 @@ final class IdempotencyInterceptorTest
         Assert::same($handler->calls, 2);
     }
 
+    public function sameClientKeyOnDifferentEndpointsRunsSeparately(): void
+    {
+        $interceptor = $this->interceptor();
+        $handler = new CountingHandler($this->psr17);
+
+        // The SAME client Idempotency-Key hitting two different endpoints that share the 'http' alias.
+        $requestA = $this->psr17->createServerRequest('POST', '/a')->withHeader('Idempotency-Key', 'client-key');
+        $requestB = $this->psr17->createServerRequest('POST', '/b')->withHeader('Idempotency-Key', 'client-key');
+
+        $interceptor->intercept($this->context('endpointA', [], $requestA), $handler);
+        $interceptor->intercept($this->context('endpointB', [], $requestB), $handler);
+
+        // Default scope namespaces each by its own operation identity → distinct key spaces → both run.
+        // No cross-endpoint replay of another endpoint's cached response.
+        Assert::same($handler->calls, 2);
+    }
+
+    public function explicitScopeSharesKeySpace(): void
+    {
+        $interceptor = $this->interceptor();
+        $handler = new CountingHandler($this->psr17);
+
+        $requestA = $this->psr17->createServerRequest('POST', '/a')->withHeader('Idempotency-Key', 'k');
+        $requestB = $this->psr17->createServerRequest('POST', '/b')->withHeader('Idempotency-Key', 'k');
+
+        $interceptor->intercept($this->context('sharedA', [], $requestA), $handler);
+        /** @var ResponseInterface $second */
+        $second = $interceptor->intercept($this->context('sharedB', [], $requestB), $handler);
+
+        // Both methods declare scope: 'shared-op' → one shared key space → the second call replays.
+        Assert::same($handler->calls, 1);
+        Assert::same($second->getHeaderLine('Idempotency-Replay'), 'true');
+    }
+
+    public function globalScopeOptsOutOfNamespacing(): void
+    {
+        $interceptor = $this->interceptor();
+        $handler = new CountingHandler($this->psr17);
+
+        $requestA = $this->psr17->createServerRequest('POST', '/a')->withHeader('Idempotency-Key', 'g');
+        $requestB = $this->psr17->createServerRequest('POST', '/b')->withHeader('Idempotency-Key', 'g');
+
+        $interceptor->intercept($this->context('globalA', [], $requestA), $handler);
+        $interceptor->intercept($this->context('globalB', [], $requestB), $handler);
+
+        // SCOPE_GLOBAL opts out of namespacing → one global key space → cross-endpoint replay (pre-fix
+        // behaviour, kept as an explicit opt-out).
+        Assert::same($handler->calls, 1);
+    }
+
     public function bindsContextInIsolatedScopeWithoutLeaking(): void
     {
         // With a real Spiral container, dispatch() must expose IdempotencyContext to the action via an
@@ -423,6 +515,7 @@ final class IdempotencyInterceptorTest
             $interceptor = $this->interceptor($stack);
             $handler = new CountingHandler($this->psr17);
             $key = 'order-' . $label;
+            $expected = AnnotatedFixture::class . '::withKey:' . $key;
 
             /** @var ResponseInterface $first */
             $first = $interceptor->intercept($this->context('withKey', ['key' => $key]), $handler);
@@ -430,9 +523,9 @@ final class IdempotencyInterceptorTest
             $second = $interceptor->intercept($this->context('withKey', ['key' => $key]), $handler);
 
             Assert::same($handler->calls, 1, $label);
-            Assert::same($first->getHeaderLine('Idempotency-Key'), $key, $label);
+            Assert::same($first->getHeaderLine('Idempotency-Key'), $expected, $label);
             Assert::same($first->getHeaderLine('Idempotency-Replay'), 'false', $label);
-            Assert::same($second->getHeaderLine('Idempotency-Key'), $key, $label);
+            Assert::same($second->getHeaderLine('Idempotency-Key'), $expected, $label);
             Assert::same($second->getHeaderLine('Idempotency-Replay'), 'true', $label);
         }
     }
@@ -442,8 +535,10 @@ final class IdempotencyInterceptorTest
         $clock = new MutableClock();
         $manager = new LeaseManager(new InMemoryLeaseStorage($clock), $clock);
 
-        // Occupy the key with an in-flight PROCESSING lease held by "someone else".
-        $manager->acquire('busy-key', 30);
+        // Occupy the key with an in-flight PROCESSING lease held by "someone else". The interceptor
+        // namespaces the client key by operation identity, so the pre-acquired key must be the composite.
+        $key = (new KeyResolver())->resolve('busy-key', AnnotatedFixture::class . '::withKey');
+        $manager->acquire($key, 30);
 
         $interceptor = $this->interceptor(manager: $manager);
         $handler = new CountingHandler($this->psr17);
@@ -452,7 +547,7 @@ final class IdempotencyInterceptorTest
         $response = $interceptor->intercept($this->context('withKey', ['key' => 'busy-key']), $handler);
 
         Assert::same($response->getStatusCode(), 409);
-        Assert::same($response->getHeaderLine('Idempotency-Key'), 'busy-key');
+        Assert::same($response->getHeaderLine('Idempotency-Key'), $key);
         Assert::same($handler->calls, 0);
     }
 

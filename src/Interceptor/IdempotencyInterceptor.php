@@ -63,13 +63,21 @@ final class IdempotencyInterceptor implements InterceptorInterface
         }
 
         $storage = $attribute->storage;
+
+        // Namespace the key by operation identity (Class::method) unless the attribute overrides it, so the
+        // same client key on two different endpoints sharing a storage alias does not cross-replay. An
+        // explicit scope name shares one space deliberately; SCOPE_GLOBAL ('') opts out into a single space.
+        $scope = $attribute->scope ?? $this->targetId($context);
+        $scope = $scope === Idempotent::SCOPE_GLOBAL ? null : $scope;
+
         $call = new IdempotencyCall(
             context: $context,
             // Expose the driver's context (e.g. a CycleContext with the transactional connection) so the
             // action can inject IdempotencyContext and narrow to it.
             operation: fn(IdempotencyContext $operation): mixed => $this->dispatch($operation, $handler, $context),
             options: new ExecuteOptions($attribute->lockTtl, $attribute->ttl),
-            key: $this->keyFromArguments($attribute, $context),
+            key: $this->keyFromArguments($attribute, $context, $scope),
+            keyScope: $scope,
         );
 
         return $this->pipeline()->process(
@@ -109,10 +117,11 @@ final class IdempotencyInterceptor implements InterceptorInterface
      * (typo in the path, or a non-scalar value), so we fail fast rather than silently falling back to the
      * transport and deduplicating on a different basis than the author intended.
      *
+     * @param non-empty-string|null $scope operation-identity namespace mixed in as the resolver's parent key
      * @return non-empty-string|null
      * @throws MisconfigurationException when an explicit `key` path resolves to nothing
      */
-    private function keyFromArguments(Idempotent $attribute, CallContextInterface $context): ?string
+    private function keyFromArguments(Idempotent $attribute, CallContextInterface $context, ?string $scope): ?string
     {
         if ($attribute->key === null) {
             return null;
@@ -120,7 +129,7 @@ final class IdempotencyInterceptor implements InterceptorInterface
 
         $raw = $this->dotGet($context->getArguments(), $attribute->key);
 
-        return $raw !== null ? $this->keys->resolve($raw) : throw new MisconfigurationException(\sprintf(
+        return $raw !== null ? $this->keys->resolve($raw, $scope) : throw new MisconfigurationException(\sprintf(
             'Idempotency key path "%s" resolved to nothing for %s; available top-level arguments: %s.',
             $attribute->key,
             (string) $context->getTarget(),
@@ -152,6 +161,25 @@ final class IdempotencyInterceptor implements InterceptorInterface
             new Scope(bindings: [IdempotencyContext::class => $operation]),
             fn(): mixed => $handler->handle($context),
         );
+    }
+
+    /**
+     * Operation identity used as the default key scope: `Class::method` from the target's reflection,
+     * falling back to the target's string form when reflection is not a method (e.g. a closure target).
+     *
+     * @return non-empty-string
+     */
+    private function targetId(CallContextInterface $context): string
+    {
+        $target = $context->getTarget();
+        $reflection = $target->getReflection();
+        if ($reflection instanceof \ReflectionMethod) {
+            return $reflection->getDeclaringClass()->getName() . '::' . $reflection->getName();
+        }
+
+        $id = (string) $target;
+
+        return $id === '' ? 'unknown' : $id;
     }
 
     private function attribute(?\ReflectionFunctionAbstract $reflection): ?Idempotent

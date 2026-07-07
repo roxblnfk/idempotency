@@ -15,17 +15,35 @@ namespace Spiral\Idempotency\Attribute;
 final readonly class Idempotent
 {
     /**
+     * Explicit opt-out value for {@see $scope}: share one global key space for the storage alias, the
+     * pre-namespacing behaviour where uniqueness across endpoints is the client's responsibility.
+     */
+    public const SCOPE_GLOBAL = '';
+
+    /**
      * @param non-empty-string $storage semantic alias from config (driver + guarantee live there)
      * @param string|null $key property-path to the key (dot-notation), or null + a custom resolver
      * @param int<1, max>|null $lockTtl override the PROCESSING lock TTL in seconds; null = from config.
      *        Applies to the lease/AtLeastOnce driver only — the inbox/ExactlyOnce driver ignores it
      *        (its mutual exclusion is the row lock of the in-progress INSERT, not a time-bound lease).
      * @param int<1, max>|null $ttl override the retention TTL in seconds; null = from config
+     * @param string|null $scope key-space namespace mixed into the key as `parentKey` so the same client
+     *        `Idempotency-Key` on two different endpoints does not collide in a shared storage alias:
+     *
+     *        | value | behaviour |
+     *        |---|---|
+     *        | `null` (default) | auto: namespace by operation identity (`Class::method`) — the safe default |
+     *        | `'some-name'` | explicit name — deliberately share one key space across several endpoints (e.g. an HTTP endpoint and a Queue job that are the same logical operation) |
+     *        | {@see self::SCOPE_GLOBAL} (`''`) | opt out: one global key space for the alias, client owns uniqueness |
+     *
+     *        Applies to the transport (attribute/interceptor) path only — a direct
+     *        {@see \Spiral\Idempotency\IdempotencyInterface::execute()} call takes the final key as given.
      */
     public function __construct(
         public string $storage,
         public ?string $key = null,
         public ?int $lockTtl = null,
         public ?int $ttl = null,
+        public ?string $scope = null,
     ) {}
 }
