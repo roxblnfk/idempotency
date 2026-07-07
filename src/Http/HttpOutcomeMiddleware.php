@@ -34,6 +34,13 @@ use Spiral\Idempotency\Uncacheable;
  * also maps key-resolution failures raised by the inner middleware. Non-response results pass through
  * untouched.
  *
+ * WARNING: this middleware only snapshots RETURNED responses; a domain failure expressed as a thrown
+ * exception bypasses it. On replay such a throw surfaces as a {@see \Spiral\Idempotency\Exception\CachedDomainFailureException}
+ * (unless the exception implements {@see \Spiral\Idempotency\ReplayableFailureInterface}), which the
+ * application exception handler is likely to render with a DIFFERENT HTTP status than the first attempt.
+ * Prefer returning a Response for negative domain outcomes over throwing, so the cached snapshot drives a
+ * consistent status on replay.
+ *
  * @api
  */
 final readonly class HttpOutcomeMiddleware implements ResolutionMiddleware

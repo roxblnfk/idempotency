@@ -22,12 +22,37 @@ use Spiral\Idempotency\Lease\LeaseStorageInterface;
 use Spiral\Idempotency\Lease\StoredEntry;
 use Spiral\Idempotency\Pipeline\Middleware\ClassifierMiddleware;
 use Spiral\Idempotency\Pipeline\Pipeline;
+use Spiral\Idempotency\ReplayableFailureInterface;
 use Spiral\Idempotency\Tests\Support\MutableClock;
 use Spiral\Idempotency\Uncacheable;
+use Spiral\Serializer\Serializer\PhpSerializer;
 use Testo\Assert;
 use Testo\Codecov\Covers;
 use Testo\Expect;
 use Testo\Test;
+
+/**
+ * A domain failure that opts into faithful, exact-type replay by carrying a JSON-safe scalar payload.
+ */
+final class PaymentDeclinedStub extends \DomainException implements ReplayableFailureInterface
+{
+    public function __construct(
+        public readonly int $declineCode,
+        public readonly string $reason,
+    ) {
+        parent::__construct($reason);
+    }
+
+    public function toReplayPayload(): array
+    {
+        return ['declineCode' => $this->declineCode, 'reason' => $this->reason];
+    }
+
+    public static function fromReplayPayload(array $payload): static
+    {
+        return new self((int) $payload['declineCode'], (string) $payload['reason']);
+    }
+}
 
 #[Test]
 #[Covers(LeaseIdempotency::class)]
@@ -122,6 +147,62 @@ final class LeaseIdempotencyTest
         } catch (CachedDomainFailureException $replayed) {
             Assert::same($replayed->originalClass, \DomainException::class);
             Assert::same($replayed->getMessage(), 'rejected');
+        }
+    }
+
+    public function replayableFailureRoundTripsExactType(): void
+    {
+        $driver = $this->driver();
+        $calls = 0;
+        $op = static function () use (&$calls): never {
+            ++$calls;
+            throw new PaymentDeclinedStub(402, 'card_declined');
+        };
+
+        try {
+            $driver->execute('k', $op);
+            Assert::fail('the first attempt must throw the domain failure');
+        } catch (PaymentDeclinedStub) {
+            // first call: the replayable failure is cached (class + message + payload)
+        }
+
+        try {
+            $driver->execute('k', $op);
+            Assert::fail('replay should rethrow the exact original type');
+        } catch (PaymentDeclinedStub $replayed) {
+            // The exact type is reconstructed from the payload — not a CachedDomainFailureException.
+            Assert::same($replayed->declineCode, 402);
+            Assert::same($replayed->reason, 'card_declined');
+        }
+
+        // The operation ran only once; the replay came from the cached snapshot.
+        Assert::same($calls, 1);
+    }
+
+    public function vanishedReplayableClassFallsBackToSnapshot(): void
+    {
+        // Simulate a snapshot written by an earlier deploy: it carries a payload, but the failure class
+        // no longer exists in this deploy. is_a() over a missing class is false → fall back, never fatal.
+        $clock = new MutableClock();
+        $manager = new LeaseManager(new InMemoryLeaseStorage($clock), $clock);
+
+        $acquired = $manager->acquire('k', 30);
+        \assert($acquired instanceof Acquired);
+        $blob = (string) (new PhpSerializer())->serialize([
+            'class' => 'App\\Gone\\PaymentException',
+            'message' => 'gone',
+            'payload' => ['x' => 1],
+        ]);
+        $manager->complete('k', $acquired->token, false, $blob, 3600);
+
+        $driver = new LeaseIdempotency($manager, new Pipeline(), lockTtl: 30, retentionTtl: 3600);
+
+        try {
+            $driver->execute('k', static fn(): string => 'never reached');
+            Assert::fail('replay should rethrow the cached failure');
+        } catch (CachedDomainFailureException $e) {
+            Assert::same($e->originalClass, 'App\\Gone\\PaymentException');
+            Assert::same($e->getMessage(), 'gone');
         }
     }
 

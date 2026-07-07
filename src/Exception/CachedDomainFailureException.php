@@ -9,8 +9,11 @@ namespace Spiral\Idempotency\Exception;
  * lease driver stores a lightweight snapshot of the original throwable (class + message) rather than
  * the object itself — serializing arbitrary exceptions is fragile (their trace can capture closures).
  *
- * The exact-type replay of the original exception is the job of the transport middleware (which caches
- * the full response), not of this default driver.
+ * This is the fallback replay type: the original exception's exact class is NOT reconstructed here. For
+ * a faithful, exact-type replay, make the domain exception implement {@see \Spiral\Idempotency\ReplayableFailureInterface}
+ * (the driver then rethrows the original type from its payload); otherwise map the failure by
+ * {@see $originalClass} in the application exception handler, so an idempotent replay renders the same
+ * HTTP status as the first attempt.
  *
  * @api
  */

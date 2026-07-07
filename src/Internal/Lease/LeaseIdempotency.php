@@ -23,6 +23,7 @@ use Spiral\Idempotency\Pipeline\ExecutionCall;
 use Spiral\Idempotency\Pipeline\FailureClassifierInterface;
 use Spiral\Idempotency\Pipeline\FailureKind;
 use Spiral\Idempotency\Pipeline\Pipeline;
+use Spiral\Idempotency\ReplayableFailureInterface;
 use Spiral\Idempotency\Uncacheable;
 use Spiral\Serializer\Serializer\PhpSerializer;
 use Spiral\Serializer\SerializerInterface;
@@ -203,7 +204,16 @@ final readonly class LeaseIdempotency implements IdempotencyInterface, Guarantee
 
         // Cached domain failure — rethrow a deterministic snapshot of the original outcome.
         if (\is_array($decoded) && isset($decoded['class'], $decoded['message'])) {
-            throw new CachedDomainFailureException((string) $decoded['class'], (string) $decoded['message']);
+            $class = (string) $decoded['class'];
+
+            // Faithful replay: the original exception opted in via ReplayableFailureInterface AND its
+            // class still exists (is_a() with a vanished class returns false — deploy-safe, no fatal).
+            if (isset($decoded['payload']) && \is_a($class, ReplayableFailureInterface::class, true)) {
+                throw $class::fromReplayPayload((array) $decoded['payload']);
+            }
+
+            // Fallback: rethrow the lightweight snapshot; the app maps by originalClass in its handler.
+            throw new CachedDomainFailureException($class, (string) $decoded['message']);
         }
 
         throw new IdempotencyException(\sprintf(
@@ -220,14 +230,18 @@ final readonly class LeaseIdempotency implements IdempotencyInterface, Guarantee
 
     /**
      * Lightweight, always-serializable snapshot of a domain failure (class + message), avoiding the
-     * fragility of serializing the throwable object itself (its trace may capture closures).
+     * fragility of serializing the throwable object itself (its trace may capture closures). When the
+     * failure opts into {@see ReplayableFailureInterface}, its JSON-safe payload is stored too, so
+     * {@see replay()} can rethrow the exact same type instead of a {@see CachedDomainFailureException}.
      */
     private function encodeFailure(\Throwable $e): string
     {
-        return (string) $this->serializer->serialize([
-            'class' => $e::class,
-            'message' => $e->getMessage(),
-        ]);
+        $snapshot = ['class' => $e::class, 'message' => $e->getMessage()];
+        if ($e instanceof ReplayableFailureInterface) {
+            $snapshot['payload'] = $e->toReplayPayload();
+        }
+
+        return (string) $this->serializer->serialize($snapshot);
     }
 
     private function decode(?string $blob): mixed

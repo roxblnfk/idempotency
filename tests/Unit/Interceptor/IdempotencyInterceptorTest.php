@@ -27,6 +27,7 @@ use Spiral\Idempotency\Internal\Lease\LeaseManager;
 use Spiral\Idempotency\Internal\Lease\Storage\InMemoryLeaseStorage;
 use Spiral\Idempotency\KeyResolverInterface;
 use Spiral\Idempotency\Pipeline\Pipeline;
+use Spiral\Idempotency\ReplayableFailureInterface;
 use Spiral\Idempotency\Tests\Support\MutableClock;
 use Spiral\Interceptors\Context\CallContext;
 use Spiral\Interceptors\Context\CallContextInterface;
@@ -83,6 +84,42 @@ final class CountingHandler implements HandlerInterface
             ->createResponse($this->status)
             ->withHeader('Content-Type', 'text/plain')
             ->withBody($this->factory->createStream('run#' . $this->calls));
+    }
+}
+
+/**
+ * A domain failure that opts into faithful, exact-type replay via {@see ReplayableFailureInterface}.
+ */
+final class DeclinedFailureStub extends \DomainException implements ReplayableFailureInterface
+{
+    public function __construct(public readonly int $declineCode)
+    {
+        parent::__construct('declined');
+    }
+
+    public function toReplayPayload(): array
+    {
+        return ['declineCode' => $this->declineCode];
+    }
+
+    public static function fromReplayPayload(array $payload): static
+    {
+        return new self((int) $payload['declineCode']);
+    }
+}
+
+/**
+ * Handler stub that throws a replayable domain failure, counting invocations.
+ */
+final class ThrowingHandler implements HandlerInterface
+{
+    public int $calls = 0;
+
+    public function handle(CallContextInterface $context): mixed
+    {
+        ++$this->calls;
+
+        throw new DeclinedFailureStub(402);
     }
 }
 
@@ -272,6 +309,30 @@ final class IdempotencyInterceptorTest
         Assert::notNull($thrown);
         // Key assertion: the header fallback did NOT kick in — the handler never ran.
         Assert::same($handler->calls, 0);
+    }
+
+    public function thrownReplayableFailureReplaysSameClassOverHttp(): void
+    {
+        $interceptor = $this->interceptor();
+        $handler = new ThrowingHandler();
+
+        try {
+            $interceptor->intercept($this->context('withKey', ['key' => 'rf']), $handler);
+            Assert::fail('the first attempt must throw the domain failure');
+        } catch (DeclinedFailureStub) {
+            // first call: the replayable failure is cached
+        }
+
+        try {
+            $interceptor->intercept($this->context('withKey', ['key' => 'rf']), $handler);
+            Assert::fail('replay should rethrow the exact original type');
+        } catch (DeclinedFailureStub $replayed) {
+            // Same class as the first attempt → the app handler renders the same HTTP status.
+            Assert::same($replayed->declineCode, 402);
+        }
+
+        // The handler ran once; the replay came from the cached snapshot.
+        Assert::same($handler->calls, 1);
     }
 
     public function passesThroughWhenNoAttribute(): void
