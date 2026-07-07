@@ -12,9 +12,13 @@ use Spiral\Idempotency\Pipeline\FailureKind;
  * terminal transition (Domain → complete(success=false), Infrastructure → abort, Bug → error); the
  * original throwable is available via {@see \Throwable::getPrevious()}.
  *
+ * Extends {@see \RuntimeException} rather than {@see IdempotencyException} on purpose: a user middleware
+ * sitting between the classifier and the driver handler with a {@see IdempotencyException} catch-all must
+ * not swallow this internal marker and lose the {@see FailureKind} it carries.
+ *
  * @internal Channel between the classifier middleware and the driver handler; not part of the public API.
  */
-final class ClassifiedException extends IdempotencyException
+final class ClassifiedException extends \RuntimeException
 {
     public function __construct(
         public readonly FailureKind $kind,
