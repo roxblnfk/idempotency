@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Spiral\Idempotency\Internal\Key;
 
-use Spiral\Idempotency\Exception\NonDeterministicKeyException;
+use Spiral\Idempotency\Exception\MissingKeyException;
 use Spiral\Idempotency\KeyResolverInterface;
 
 /**
@@ -35,7 +35,7 @@ final class KeyResolver implements KeyResolverInterface
     {
         $material = $raw === null ? '' : \trim($raw);
         if ($material === '') {
-            throw new NonDeterministicKeyException(
+            throw new MissingKeyException(
                 'Idempotency key material is empty; cannot derive a stable key.',
             );
         }

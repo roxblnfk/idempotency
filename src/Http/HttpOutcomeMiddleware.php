@@ -8,6 +8,7 @@ use Psr\Http\Message\ResponseFactoryInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\StreamFactoryInterface;
 use Spiral\Idempotency\Exception\LockedException;
+use Spiral\Idempotency\Exception\MissingKeyException;
 use Spiral\Idempotency\IdempotencyContext;
 use Spiral\Idempotency\Lease\Locked;
 use Spiral\Idempotency\Pipeline\IdempotencyCall;
@@ -23,6 +24,7 @@ use Spiral\Idempotency\Uncacheable;
  *  - rebuilds the response from the snapshot on the way out (via PSR-17 factories) and adds the
  *    `Idempotency-Key` / `Idempotency-Replay` headers;
  *  - turns a {@see LockedException} into `409 Conflict` + `Retry-After`;
+ *  - turns a {@see MissingKeyException} into `400 Bad Request` (a missing key is a client error, not a 500);
  *  - wraps a non-cacheable response (default: status >= 500, transient) in {@see Uncacheable}, so the
  *    lease handler releases the key and a retry re-runs instead of replaying the error forever.
  *
@@ -73,6 +75,8 @@ final readonly class HttpOutcomeMiddleware implements ResolutionMiddleware
             $cached = $next($encoded);
         } catch (LockedException $e) {
             return $this->conflict($e->lock);
+        } catch (MissingKeyException $e) {
+            return $this->badRequest($e->getMessage());
         }
 
         // Read the key from the snapshot (before decode() turns it back into a bare Response), falling
@@ -137,6 +141,23 @@ final readonly class HttpOutcomeMiddleware implements ResolutionMiddleware
         return $result
             ->withHeader('Idempotency-Key', $key)
             ->withHeader('Idempotency-Replay', $replayed ? 'true' : 'false');
+    }
+
+    /**
+     * Map a missing idempotency key ({@see MissingKeyException} from the inner key middleware or the
+     * interceptor terminal) to `400 Bad Request`. The JSON body shape is a default — override it by
+     * replacing this middleware in the transport config.
+     */
+    private function badRequest(string $message): ResponseInterface
+    {
+        $payload = (string) \json_encode([
+            'error' => 'missing_idempotency_key',
+            'message' => $message,
+        ]);
+
+        return $this->responses->createResponse(400)
+            ->withHeader('Content-Type', 'application/json')
+            ->withBody($this->streams->createStream($payload));
     }
 
     private function conflict(Locked $lock): ResponseInterface

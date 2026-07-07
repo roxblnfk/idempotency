@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Spiral\Idempotency\Tests\Unit\Key;
 
-use Spiral\Idempotency\Exception\NonDeterministicKeyException;
+use Spiral\Idempotency\Exception\MissingKeyException;
 use Spiral\Idempotency\Internal\Key\KeyResolver;
 use Testo\Assert;
 use Testo\Codecov\Covers;
@@ -55,14 +55,14 @@ final class KeyResolverTest
 
     public function rejectsNullMaterial(): never
     {
-        Expect::exception(NonDeterministicKeyException::class);
+        Expect::exception(MissingKeyException::class);
 
         (new KeyResolver())->resolve(null);
     }
 
     public function rejectsBlankMaterial(): never
     {
-        Expect::exception(NonDeterministicKeyException::class);
+        Expect::exception(MissingKeyException::class);
 
         (new KeyResolver())->resolve('   ');
     }

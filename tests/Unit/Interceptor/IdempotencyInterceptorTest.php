@@ -210,6 +210,39 @@ final class IdempotencyInterceptorTest
         Assert::same($handler->calls, 1);
     }
 
+    public function missingKeyYieldsBadRequest(): void
+    {
+        $interceptor = $this->interceptor();
+        $handler = new CountingHandler($this->psr17);
+
+        // No attribute key, and the request carries neither the header nor the body/query field.
+        $request = $this->psr17->createServerRequest('POST', '/charge');
+
+        /** @var ResponseInterface $response */
+        $response = $interceptor->intercept($this->context('fromHeader', [], $request), $handler);
+
+        Assert::same($response->getStatusCode(), 400);
+        Assert::same($response->getHeaderLine('Content-Type'), 'application/json');
+        Assert::string((string) $response->getBody())->contains('missing_idempotency_key');
+        Assert::same($handler->calls, 0);
+    }
+
+    public function blankHeaderYieldsBadRequest(): void
+    {
+        $interceptor = $this->interceptor();
+        $handler = new CountingHandler($this->psr17);
+
+        // A whitespace-only key trims to empty — the resolver rejects it as missing (KeyResolver branch).
+        $request = $this->psr17->createServerRequest('POST', '/charge')->withHeader('Idempotency-Key', '   ');
+
+        /** @var ResponseInterface $response */
+        $response = $interceptor->intercept($this->context('fromHeader', [], $request), $handler);
+
+        Assert::same($response->getStatusCode(), 400);
+        Assert::string((string) $response->getBody())->contains('missing_idempotency_key');
+        Assert::same($handler->calls, 0);
+    }
+
     public function passesThroughWhenNoAttribute(): void
     {
         $interceptor = $this->interceptor();

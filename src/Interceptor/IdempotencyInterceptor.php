@@ -10,7 +10,7 @@ use Spiral\Core\ContainerScope;
 use Spiral\Core\Scope;
 use Spiral\Idempotency\Attribute\Idempotent;
 use Spiral\Idempotency\Config\IdempotencyConfig;
-use Spiral\Idempotency\Exception\NonDeterministicKeyException;
+use Spiral\Idempotency\Exception\MissingKeyException;
 use Spiral\Idempotency\ExecuteOptions;
 use Spiral\Idempotency\IdempotencyContext;
 use Spiral\Idempotency\IdempotencyRegistry;
@@ -74,8 +74,8 @@ final class IdempotencyInterceptor implements InterceptorInterface
         return $this->pipeline()->process(
             $call,
             fn(IdempotencyCall $c): mixed => $this->registry->get($storage)->execute(
-                $c->key ?? throw new NonDeterministicKeyException(
-                    'No idempotency key could be resolved for the request.',
+                $c->key ?? throw new MissingKeyException(
+                    'No idempotency key was resolved by the attribute arg-path nor by any transport middleware.',
                 ),
                 $c->operation,
                 $c->options,

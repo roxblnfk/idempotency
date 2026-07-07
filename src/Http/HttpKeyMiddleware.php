@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Spiral\Idempotency\Http;
 
 use Psr\Http\Message\ServerRequestInterface;
+use Spiral\Idempotency\Exception\MissingKeyException;
 use Spiral\Idempotency\KeyResolverInterface;
 use Spiral\Idempotency\Pipeline\IdempotencyCall;
 use Spiral\Idempotency\Pipeline\ResolutionMiddleware;
@@ -45,7 +46,14 @@ final readonly class HttpKeyMiddleware implements ResolutionMiddleware
             return $next($call);
         }
 
-        return $next($call->withKey($this->resolver->resolve($this->extract($request))));
+        $raw = $this->extract($request)
+            ?? throw new MissingKeyException(\sprintf(
+                'Idempotency key is required: pass the "%s" header or the "%s" body/query field.',
+                $this->header,
+                $this->field,
+            ));
+
+        return $next($call->withKey($this->resolver->resolve($raw)));
     }
 
     private function extract(ServerRequestInterface $request): ?string
