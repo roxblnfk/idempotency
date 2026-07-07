@@ -18,10 +18,13 @@ use Spiral\Idempotency\Driver\Cycle\CycleInboxConfig;
 use Spiral\Idempotency\Driver\Cycle\CycleLeaseConfig;
 use Spiral\Idempotency\Driver\Cycle\Internal\CycleInboxDriver;
 use Spiral\Idempotency\Driver\Cycle\Internal\CycleLeaseStorage;
+use Spiral\Idempotency\Exception\LeaseLostException;
 use Spiral\Idempotency\Exception\MisconfigurationException;
+use Spiral\Idempotency\ExecuteOptions;
 use Spiral\Idempotency\Guarantee;
 use Spiral\Idempotency\IdempotencyContext;
 use Spiral\Idempotency\IdempotencyRegistry;
+use Spiral\Idempotency\Internal\Lease\LeaseIdempotency;
 use Spiral\Idempotency\Internal\Lease\LeaseManager;
 use Spiral\Idempotency\Internal\Lease\RandomTokenFactory;
 use Spiral\Idempotency\Internal\Pipeline\DefaultFailureClassifier;
@@ -29,6 +32,9 @@ use Spiral\Idempotency\Lease\Acquired;
 use Spiral\Idempotency\Lease\AlreadyCompleted;
 use Spiral\Idempotency\Lease\LeaseState;
 use Spiral\Idempotency\Lease\Locked;
+use Spiral\Idempotency\Lease\TokenFactoryInterface;
+use Spiral\Idempotency\Pipeline\Middleware\ClassifierMiddleware;
+use Spiral\Idempotency\Pipeline\Pipeline;
 use Spiral\Idempotency\Tests\Support\MutableClock;
 use Testo\Assert;
 use Testo\Codecov\Covers;
@@ -168,6 +174,51 @@ abstract class CycleStorageTestCase extends DatabaseTestCase
         $replay = $manager->acquire($key, 30);
         Assert::instanceOf($replay, AlreadyCompleted::class);
         Assert::same($replay->result, 'cached');
+    }
+
+    public function takeoverThenOriginalOwnerCompletes(): void
+    {
+        $key = $this->key();
+        $clock = new MutableClock();
+        $storage = new CycleLeaseStorage($this->db(), $clock);
+
+        // The original owner ("old") runs through the LeaseIdempotency handler; its operation takes long
+        // enough for the lock TTL to lapse and a second worker ("new") to take the key over mid-flight.
+        $oldTokens = new class implements TokenFactoryInterface {
+            public function create(): string
+            {
+                return 'old';
+            }
+        };
+        $handler = new LeaseIdempotency(
+            new LeaseManager($storage, $clock, $oldTokens),
+            new Pipeline(new ClassifierMiddleware(new DefaultFailureClassifier())),
+        );
+
+        $result = $handler->execute($key, function () use ($storage, $clock, $key): string {
+            $clock->advance(11); // lock TTL (10s) lapses
+            Assert::true($storage->acquire($key, 'new', 30)); // "new" takes over the expired lease
+            return 'v';
+        }, new ExecuteOptions(lockTtl: 10));
+
+        // The operation's value reaches the caller even though complete() was CAS-rejected...
+        Assert::same($result, 'v');
+        // ...and the stored record still belongs to the new owner — the loss did not overwrite it.
+        $entry = $storage->read($key);
+        Assert::same($entry?->token, 'new');
+        Assert::same($entry?->state, LeaseState::Processing);
+
+        // The manager's strict contract is intact: a stale owner completing directly still throws.
+        $staleManager = new LeaseManager($storage, $clock, $oldTokens);
+        try {
+            $staleManager->complete($key, 'old', true, 'ignored', 3600);
+            Assert::fail('the stale owner must be rejected by the manager CAS');
+        } catch (LeaseLostException) {
+            // expected — only the handler forgives the loss, the manager signals it
+        }
+
+        // The rejected direct complete left the new owner's record untouched.
+        Assert::same($storage->read($key)?->token, 'new');
     }
 
     public function managerReportsLockedWhileProcessing(): void
@@ -320,6 +371,7 @@ abstract class CycleStorageTestCase extends DatabaseTestCase
 
         return (new IdempotencyBootloader())->initRegistry(
             $config,
+            $container,
             $container,
             new MutableClock(),
             new RandomTokenFactory(),

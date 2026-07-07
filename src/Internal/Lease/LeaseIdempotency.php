@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace Spiral\Idempotency\Internal\Lease;
 
+use Psr\Log\LoggerInterface;
 use Spiral\Idempotency\Exception\CachedDomainFailureException;
 use Spiral\Idempotency\Exception\ClassifiedException;
 use Spiral\Idempotency\Exception\IdempotencyException;
+use Spiral\Idempotency\Exception\LeaseLostException;
 use Spiral\Idempotency\Exception\LockedException;
 use Spiral\Idempotency\ExecuteOptions;
 use Spiral\Idempotency\Guarantee;
@@ -35,6 +37,15 @@ use Spiral\Serializer\SerializerInterface;
  * kind to pick the terminal transition. When no classifier ran (bare throwable), it falls back to its
  * own {@see $classifier}, so the handler stays correct with or without that middleware.
  *
+ * Losing the lease at the terminal transition is an observable event, NOT an outcome of the operation.
+ * The operation has already run; its result (or its throwable) belongs to the caller. So when a terminal
+ * transition is CAS-rejected (the lock TTL expired mid-flight and the key was re-acquired), this handler
+ * downgrades the {@see LeaseLostException} raised by the manager to a logger warning (via {@see terminal()})
+ * and still returns the value / rethrows the original throwable — it only skips caching the outcome, since
+ * the record now belongs to the new owner. The strict "throw on lost lease" contract stays in the
+ * {@see \Spiral\Idempotency\Lease\LeaseManagerInterface} for the future renewal middleware. Until that
+ * middleware exists, a handler MUST finish within its lock TTL; a lost lease means the TTL is too short.
+ *
  * @internal Built per storage alias by the factory; consumers resolve {@see IdempotencyInterface}
  *           from the {@see \Spiral\Idempotency\IdempotencyRegistry}. Not part of the public API.
  */
@@ -57,6 +68,7 @@ final readonly class LeaseIdempotency implements IdempotencyInterface, Guarantee
         ?SerializerInterface $serializer = null,
         ?FailureClassifierInterface $classifier = null,
         private int $acquireRetryLimit = 3,
+        private ?LoggerInterface $logger = null,
     ) {
         $this->serializer = $serializer ?? new PhpSerializer();
         $this->classifier = $classifier ?? new DefaultFailureClassifier();
@@ -121,12 +133,16 @@ final readonly class LeaseIdempotency implements IdempotencyInterface, Guarantee
 
         if ($value instanceof Uncacheable) {
             // Transient outcome (e.g. 5xx): don't cache, release the key so a retry re-runs.
-            $this->manager->abort($lease->key, $lease->token);
+            $this->terminal(function () use ($lease): void {
+                $this->manager->abort($lease->key, $lease->token);
+            }, $lease->key);
 
             return $value->value;
         }
 
-        $this->manager->complete($lease->key, $lease->token, true, $this->encode($value), $retentionTtl);
+        $this->terminal(function () use ($lease, $value, $retentionTtl): void {
+            $this->manager->complete($lease->key, $lease->token, true, $this->encode($value), $retentionTtl);
+        }, $lease->key);
 
         return $value;
     }
@@ -141,20 +157,40 @@ final readonly class LeaseIdempotency implements IdempotencyInterface, Guarantee
         $original = $e instanceof ClassifiedException ? ($e->getPrevious() ?? $e) : $e;
         $kind = $e instanceof ClassifiedException ? $e->kind : $this->classifier->classify($e);
 
-        match ($kind) {
-            // Domain: a valid (negative) outcome — cache a lightweight snapshot for idempotent replay.
-            FailureKind::Domain => $this->manager->complete(
-                $lease->key,
-                $lease->token,
-                false,
-                $this->encodeFailure($original),
-                $retentionTtl,
-            ),
-            // Bug: unrecoverable, do not re-enqueue; report happens outside.
-            FailureKind::Bug => $this->manager->error($lease->key, $lease->token),
-            // Infrastructure: free the key, the transport/client retries.
-            FailureKind::Infrastructure => $this->manager->abort($lease->key, $lease->token),
-        };
+        $this->terminal(function () use ($kind, $lease, $original, $retentionTtl): void {
+            match ($kind) {
+                // Domain: a valid (negative) outcome — cache a lightweight snapshot for idempotent replay.
+                FailureKind::Domain => $this->manager->complete(
+                    $lease->key,
+                    $lease->token,
+                    false,
+                    $this->encodeFailure($original),
+                    $retentionTtl,
+                ),
+                // Bug: unrecoverable, do not re-enqueue; report happens outside.
+                FailureKind::Bug => $this->manager->error($lease->key, $lease->token),
+                // Infrastructure: free the key, the transport/client retries.
+                FailureKind::Infrastructure => $this->manager->abort($lease->key, $lease->token),
+            };
+        }, $lease->key);
+    }
+
+    /**
+     * Run a terminal transition, downgrading a lost lease to a warning: the operation's outcome belongs
+     * to the caller; the loss itself only signals the lock TTL is too short (and the outcome is not cached,
+     * since the record now belongs to the new owner).
+     */
+    private function terminal(\Closure $transition, string $key): void
+    {
+        try {
+            $transition();
+        } catch (LeaseLostException $e) {
+            $this->logger?->warning(
+                'Idempotency lease for key "{key}" was lost before the terminal transition; '
+                . 'the operation outcome is preserved, but consider a longer lockTtl.',
+                ['key' => $key, 'exception' => $e],
+            );
+        }
     }
 
     private function replay(AlreadyCompleted $completed): mixed

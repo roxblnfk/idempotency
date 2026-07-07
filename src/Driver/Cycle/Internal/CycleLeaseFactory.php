@@ -55,6 +55,7 @@ final class CycleLeaseFactory implements StorageFactoryInterface
             $config->retentionTtl,
             $services->serializer,
             $services->classifier,
+            logger: $services->logger,
         );
     }
 }

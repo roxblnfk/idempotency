@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Spiral\Idempotency\Bootloader;
 
 use Psr\Clock\ClockInterface;
+use Psr\Container\ContainerInterface;
+use Psr\Log\LoggerInterface;
 use Spiral\Boot\Bootloader\Bootloader;
 use Spiral\Core\FactoryInterface;
 use Spiral\Idempotency\Config\IdempotencyConfig;
@@ -54,6 +56,7 @@ final class IdempotencyBootloader extends Bootloader
      */
     public function initRegistry(
         IdempotencyConfig $config,
+        ContainerInterface $container,
         FactoryInterface $factory,
         ClockInterface $clock,
         TokenFactoryInterface $tokens,
@@ -64,6 +67,7 @@ final class IdempotencyBootloader extends Bootloader
             $tokens,
             $classifier,
             self::serializer(),
+            $container->has(LoggerInterface::class) ? $container->get(LoggerInterface::class) : null,
         );
 
         $registry = new IdempotencyRegistry();

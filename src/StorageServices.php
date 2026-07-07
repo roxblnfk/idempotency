@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Spiral\Idempotency;
 
 use Psr\Clock\ClockInterface;
+use Psr\Log\LoggerInterface;
 use Spiral\Idempotency\Lease\TokenFactoryInterface;
 use Spiral\Idempotency\Pipeline\FailureClassifierInterface;
 use Spiral\Serializer\SerializerInterface;
@@ -24,5 +25,6 @@ final readonly class StorageServices
         public TokenFactoryInterface $tokens,
         public FailureClassifierInterface $classifier,
         public SerializerInterface $serializer,
+        public ?LoggerInterface $logger = null,
     ) {}
 }

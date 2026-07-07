@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace Spiral\Idempotency\Tests\Unit\Lease;
 
+use Psr\Log\AbstractLogger;
+use Psr\Log\LogLevel;
 use Spiral\Idempotency\Exception\CachedDomainFailureException;
+use Spiral\Idempotency\Exception\LeaseLostException;
 use Spiral\Idempotency\Exception\LockedException;
 use Spiral\Idempotency\ExecuteOptions;
 use Spiral\Idempotency\IdempotencyContext;
@@ -15,6 +18,8 @@ use Spiral\Idempotency\Internal\Pipeline\DefaultFailureClassifier;
 use Spiral\Idempotency\Lease\AcquireResult;
 use Spiral\Idempotency\Lease\Acquired;
 use Spiral\Idempotency\Lease\LeaseManagerInterface;
+use Spiral\Idempotency\Lease\LeaseStorageInterface;
+use Spiral\Idempotency\Lease\StoredEntry;
 use Spiral\Idempotency\Pipeline\Middleware\ClassifierMiddleware;
 use Spiral\Idempotency\Pipeline\Pipeline;
 use Spiral\Idempotency\Tests\Support\MutableClock;
@@ -231,6 +236,105 @@ final class LeaseIdempotencyTest
 
             public function renew(string $key, string $token, int $lockTtl): void {}
         };
+    }
+
+    // ----------------------------------------------------------------- lease lost at the terminal transition
+
+    public function lostLeaseOnSuccessStillReturnsValue(): void
+    {
+        // complete() is CAS-rejected (lease taken over), but the operation already produced its value.
+        $result = $this->lostLeaseDriver()->execute('k', static fn(): string => 'v');
+
+        Assert::same($result, 'v');
+    }
+
+    public function lostLeaseOnFailureRethrowsOriginal(): void
+    {
+        $driver = $this->lostLeaseDriver();
+
+        try {
+            $driver->execute('k', static function (): never {
+                throw new \RuntimeException('funds');
+            });
+            Assert::fail('the operation threw, so execute() must rethrow');
+        } catch (LeaseLostException $e) {
+            Assert::fail('the lost lease must not surface: ' . $e->getMessage());
+        } catch (\RuntimeException $e) {
+            // The original domain throwable reaches the caller, not the LeaseLostException wrapper.
+            Assert::same($e->getMessage(), 'funds');
+        }
+    }
+
+    public function lostLeaseOnUncacheableReturnsUnwrappedValue(): void
+    {
+        // abort() is CAS-rejected, but the transient value is still handed back unwrapped.
+        $result = $this->lostLeaseDriver()->execute('k', static fn(): Uncacheable => new Uncacheable('transient'));
+
+        Assert::same($result, 'transient');
+    }
+
+    public function lostLeaseIsReportedToLogger(): void
+    {
+        $logger = new class extends AbstractLogger {
+            /** @var list<array{level: mixed, message: string, context: array<string, mixed>}> */
+            public array $records = [];
+
+            public function log($level, string|\Stringable $message, array $context = []): void
+            {
+                $this->records[] = ['level' => $level, 'message' => (string) $message, 'context' => $context];
+            }
+        };
+
+        $this->lostLeaseDriver($logger)->execute('lost-key', static fn(): string => 'v');
+
+        Assert::same(\count($logger->records), 1);
+        Assert::same($logger->records[0]['level'], LogLevel::WARNING);
+        Assert::same($logger->records[0]['context']['key'], 'lost-key');
+    }
+
+    /**
+     * A driver whose storage grants acquire() but CAS-rejects every terminal transition — i.e. the lease
+     * was taken over while the operation ran. {@see LeaseManager} turns that into a {@see LeaseLostException}.
+     */
+    private function lostLeaseDriver(?\Psr\Log\LoggerInterface $logger = null): LeaseIdempotency
+    {
+        $clock = new MutableClock();
+        $classifier = new DefaultFailureClassifier();
+        $storage = new class implements LeaseStorageInterface {
+            public function acquire(string $key, string $token, int $lockTtl): bool
+            {
+                return true;
+            }
+
+            public function complete(string $key, string $token, bool $success, mixed $result, int $retentionTtl): bool
+            {
+                return false;
+            }
+
+            public function abort(string $key, string $token): bool
+            {
+                return false;
+            }
+
+            public function error(string $key, string $token): bool
+            {
+                return false;
+            }
+
+            public function renew(string $key, string $token, int $lockTtl): bool
+            {
+                return false;
+            }
+
+            public function read(string $key): ?StoredEntry
+            {
+                return null;
+            }
+        };
+        $manager = new LeaseManager($storage, $clock);
+        $execution = new Pipeline(new ClassifierMiddleware($classifier));
+
+        return new LeaseIdempotency($manager, $execution, lockTtl: 30, retentionTtl: 3600, classifier: $classifier, logger: $logger);
     }
 
     public function lockedKeyThrowsLockedException(): never
