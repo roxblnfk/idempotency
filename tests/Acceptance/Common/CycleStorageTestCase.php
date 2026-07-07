@@ -36,6 +36,7 @@ use Spiral\Idempotency\Lease\TokenFactoryInterface;
 use Spiral\Idempotency\Pipeline\Middleware\ClassifierMiddleware;
 use Spiral\Idempotency\Pipeline\Pipeline;
 use Spiral\Idempotency\Tests\Support\MutableClock;
+use Spiral\Serializer\SerializerInterface;
 use Testo\Assert;
 use Testo\Codecov\Covers;
 use Testo\Expect;
@@ -349,6 +350,46 @@ abstract class CycleStorageTestCase extends DatabaseTestCase
         $this->buildRegistry($config);
     }
 
+    public function usesContainerBoundSerializerForResultBlob(): void
+    {
+        $key = $this->key('serializer');
+
+        // A JSON serializer bound in the container must be used by the driver instead of the PhpSerializer
+        // default (7c). Proof is two-fold: the round-trip replays the exact value, AND the persisted blob
+        // is JSON, not a PHP-serialized string (which would begin with 's:' for a string payload).
+        $json = new class implements SerializerInterface {
+            public function serialize(mixed $payload): string
+            {
+                return \json_encode($payload, \JSON_THROW_ON_ERROR);
+            }
+
+            public function unserialize(string|\Stringable $payload, string|object|null $type = null): mixed
+            {
+                return \json_decode((string) $payload, true, 512, \JSON_THROW_ON_ERROR);
+            }
+        };
+
+        $config = new IdempotencyConfig([
+            'storages' => ['notifications' => new CycleLeaseConfig(table: 'idempotency')],
+        ]);
+        $registry = $this->buildRegistry($config, $json);
+
+        $calls = 0;
+        $op = static function () use (&$calls): array {
+            ++$calls;
+            return ['value' => 'v'];
+        };
+
+        Assert::same($registry->get('notifications')->execute($key, $op), ['value' => 'v']);
+        Assert::same($registry->get('notifications')->execute($key, $op), ['value' => 'v']); // replay
+        Assert::same($calls, 1);
+
+        // The stored blob is JSON produced by the injected serializer, not a PHP-serialized payload.
+        $row = $this->db()->select('result')->from('idempotency')->where('key', $key)->run()->fetch();
+        Assert::true(\is_array($row));
+        Assert::same((string) $row['result'], '{"value":"v"}');
+    }
+
     // ----------------------------------------------------------------- helpers
 
     private function inboxDriver(): CycleInboxDriver
@@ -359,7 +400,7 @@ abstract class CycleStorageTestCase extends DatabaseTestCase
         return new CycleInboxDriver(static fn(): TransactionImpl => $transaction, new MutableClock());
     }
 
-    private function buildRegistry(IdempotencyConfig $config): IdempotencyRegistry
+    private function buildRegistry(IdempotencyConfig $config, ?SerializerInterface $serializer = null): IdempotencyRegistry
     {
         $manager = $this->manager();
 
@@ -368,6 +409,10 @@ abstract class CycleStorageTestCase extends DatabaseTestCase
         $container = new Container();
         $container->bindSingleton(DatabaseProviderInterface::class, $manager);
         $container->bindSingleton(ORMInterface::class, new ORM(new Factory($manager), new Schema([])));
+        if ($serializer !== null) {
+            // The bootloader defers to an application-provided SerializerInterface over its PhpSerializer default.
+            $container->bindSingleton(SerializerInterface::class, $serializer);
+        }
 
         return (new IdempotencyBootloader())->initRegistry(
             $config,

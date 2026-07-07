@@ -31,6 +31,12 @@ use Spiral\Serializer\SerializerInterface;
  *
  * Requires the application to provide {@see DatabaseProviderInterface} (cycle/database bootloader).
  *
+ * Security: absent an application-provided {@see SerializerInterface}, cached results are stored with
+ * {@see PhpSerializer} and restored via `unserialize()` on replay — so any process that writes a row is
+ * injecting an object graph into every process that replays it. The storage table is the trust boundary.
+ * If more than one service or role writes into it, bind a JSON serializer ({@see SerializerInterface})
+ * and return JSON-safe results.
+ *
  * @api
  */
 final class IdempotencyBootloader extends Bootloader
@@ -62,11 +68,21 @@ final class IdempotencyBootloader extends Bootloader
         TokenFactoryInterface $tokens,
         FailureClassifierInterface $classifier,
     ): IdempotencyRegistry {
+        // The lease/inbox drivers cache results by serialising them. The default {@see PhpSerializer}
+        // round-trips through unserialize() on replay: writing a row into the table is object-injection
+        // into every process that replays it, so the table is the trust boundary. If several services or
+        // roles write into it, bind a JSON serializer (SerializerInterface) and return JSON-safe results.
+        // has() rather than an unconditional bind: an application's spiral/serializer component may already
+        // provide SerializerInterface, and we defer to it instead of clobbering it.
+        $serializer = $container->has(SerializerInterface::class)
+            ? $container->get(SerializerInterface::class)
+            : new PhpSerializer();
+
         $services = new StorageServices(
             $clock,
             $tokens,
             $classifier,
-            self::serializer(),
+            $serializer,
             $container->has(LoggerInterface::class) ? $container->get(LoggerInterface::class) : null,
         );
 
@@ -78,14 +94,5 @@ final class IdempotencyBootloader extends Bootloader
         }
 
         return $registry;
-    }
-
-    /**
-     * The lease driver caches results via PHP serialization by default (handles arbitrary payloads).
-     * Override this bootloader to plug a different {@see SerializerInterface} (json/proto/...).
-     */
-    private static function serializer(): SerializerInterface
-    {
-        return new PhpSerializer();
     }
 }

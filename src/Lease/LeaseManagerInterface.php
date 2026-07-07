@@ -57,6 +57,10 @@ interface LeaseManagerInterface
     /**
      * Extend PROCESSING. CAS by token.
      *
+     * Intended for a lock-renewal middleware (backlog; not yet implemented) that keeps a long-running
+     * operation's lease alive. The default pipeline never calls it — it is a forward-looking part of the
+     * contract, kept and covered so the primitive is ready when that middleware lands.
+     *
      * @param non-empty-string $key
      * @param non-empty-string $token
      * @param int<1, max> $lockTtl seconds

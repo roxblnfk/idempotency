@@ -37,7 +37,6 @@ final class CycleSchema
                 new ColumnDefinition('expire_time', 'bigInteger'),
                 new ColumnDefinition('create_time', 'bigInteger'),
             ],
-            primaryKey: ['key'],
             indexes: [['expire_time']],
         );
     }
@@ -54,7 +53,6 @@ final class CycleSchema
                 new ColumnDefinition('result', 'text', nullable: true),
                 new ColumnDefinition('create_time', 'bigInteger'),
             ],
-            primaryKey: ['key'],
         );
     }
 
@@ -82,7 +80,7 @@ final class CycleSchema
     {
         foreach ($definition->columns as $column) {
             $builder = $schema->column($column->name);
-            if ($column->length !== null && \method_exists($builder, $column->type)) {
+            if ($column->hasLength()) {
                 // typed accessor with a size, e.g. ->string(512)
                 $builder->{$column->type}($column->length);
             } else {
@@ -91,7 +89,7 @@ final class CycleSchema
             $builder->nullable($column->nullable);
         }
 
-        $schema->setPrimaryKeys($definition->primaryKey);
+        $schema->setPrimaryKeys($definition->primaryKey());
 
         foreach ($definition->indexes as $columns) {
             $schema->index($columns);

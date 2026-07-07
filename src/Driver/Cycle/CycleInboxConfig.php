@@ -14,6 +14,11 @@ use Spiral\Idempotency\StorageFactoryInterface;
 /**
  * Data-only config for an ExactlyOnce-effect inbox in a Cycle DBAL connection.
  *
+ * Security: cached results are (de)serialized by the storage's {@see \Spiral\Serializer\SerializerInterface}.
+ * The default {@see \Spiral\Serializer\Serializer\PhpSerializer} restores them via `unserialize()` on replay,
+ * so the inbox table is the trust boundary. If several services or roles write into it, bind a JSON
+ * serializer and return JSON-safe results (see {@see \Spiral\Idempotency\Bootloader\IdempotencyBootloader}).
+ *
  * @api
  */
 final class CycleInboxConfig extends StorageConfig

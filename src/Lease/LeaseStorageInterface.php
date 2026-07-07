@@ -61,6 +61,10 @@ interface LeaseStorageInterface
     /**
      * CAS by token: extend the PROCESSING lock TTL.
      *
+     * Backs {@see LeaseManagerInterface::renew()}, which the default pipeline does not call yet (it is
+     * reserved for a lock-renewal middleware in the backlog). Implemented and covered per dialect so the
+     * primitive is ready.
+     *
      * @param non-empty-string $key
      * @param non-empty-string $token
      * @param int<1, max> $lockTtl seconds

@@ -44,6 +44,23 @@ use Spiral\Interceptors\InterceptorInterface;
 final class IdempotencyInterceptor implements InterceptorInterface
 {
     /**
+     * This transport's resolution stack, assembled once and reused: the middleware are stateless
+     * `readonly` services and {@see Pipeline::process()} is reusable by contract, so a single instance
+     * per interceptor (itself a per-transport singleton) is safe.
+     *
+     * @var Pipeline<IdempotencyCall>|null
+     */
+    private ?Pipeline $pipeline = null;
+
+    /**
+     * Reflected attributes memoised by operation identity (`Class::method`), avoiding a reflection scan
+     * per call. Only method targets are keyed; other targets (closures) are looked up each time.
+     *
+     * @var array<string, Idempotent|null>
+     */
+    private array $attributes = [];
+
+    /**
      * @param non-empty-string $transport config key of this transport's resolution stack
      */
     public function __construct(
@@ -80,7 +97,7 @@ final class IdempotencyInterceptor implements InterceptorInterface
             keyScope: $scope,
         );
 
-        return $this->pipeline()->process(
+        return ($this->pipeline ??= $this->buildPipeline())->process(
             $call,
             fn(IdempotencyCall $c): mixed => $this->registry->get($storage)->execute(
                 $c->key ?? throw new MissingKeyException(
@@ -97,7 +114,7 @@ final class IdempotencyInterceptor implements InterceptorInterface
      *
      * @return Pipeline<IdempotencyCall>
      */
-    private function pipeline(): Pipeline
+    private function buildPipeline(): Pipeline
     {
         $middleware = [];
         foreach ($this->config->getTransport($this->transport) as $class) {
@@ -188,14 +205,30 @@ final class IdempotencyInterceptor implements InterceptorInterface
             return null;
         }
 
+        // Cache by operation identity for method targets (the common case); non-method targets
+        // (e.g. closures) have no stable key, so they resolve the attribute afresh each time.
+        $cacheKey = $reflection instanceof \ReflectionMethod
+            ? $reflection->getDeclaringClass()->name . '::' . $reflection->getName()
+            : null;
+
+        if ($cacheKey !== null && \array_key_exists($cacheKey, $this->attributes)) {
+            return $this->attributes[$cacheKey];
+        }
+
+        $resolved = null;
         foreach ($reflection->getAttributes(Idempotent::class, \ReflectionAttribute::IS_INSTANCEOF) as $attribute) {
             $instance = $attribute->newInstance();
             \assert($instance instanceof Idempotent);
 
-            return $instance;
+            $resolved = $instance;
+            break;
         }
 
-        return null;
+        if ($cacheKey !== null) {
+            $this->attributes[$cacheKey] = $resolved;
+        }
+
+        return $resolved;
     }
 
     /**
