@@ -22,6 +22,12 @@ use Spiral\Idempotency\KeyResolverInterface;
  * `IdempotencyInterceptor::class` to its HTTP domain core's interceptor list. List the HTTP middleware
  * under `transports.http` in `config/idempotency.php`.
  *
+ * The app MUST declare `transports.http` — at least as an empty list. A missing section is treated as a
+ * misconfiguration: {@see IdempotencyConfig::getTransport()} throws
+ * {@see \Spiral\Idempotency\Exception\MisconfigurationException} on the first `#[Idempotent]` call rather
+ * than running an empty pipeline that silently disables idempotency. An explicit `'http' => []` is valid
+ * (key comes only from the attribute, no HTTP middleware).
+ *
  * @api
  */
 final class HttpIdempotencyBootloader extends Bootloader

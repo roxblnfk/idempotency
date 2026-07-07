@@ -11,7 +11,7 @@ namespace Spiral\Idempotency\Attribute;
  *
  * @api
  */
-#[\Attribute(\Attribute::TARGET_METHOD | \Attribute::TARGET_CLASS)]
+#[\Attribute(\Attribute::TARGET_METHOD)]
 final readonly class Idempotent
 {
     /**

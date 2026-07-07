@@ -14,6 +14,7 @@ use Spiral\Core\Container;
 use Spiral\Core\ContainerScope;
 use Spiral\Idempotency\Attribute\Idempotent;
 use Spiral\Idempotency\Config\IdempotencyConfig;
+use Spiral\Idempotency\Exception\MisconfigurationException;
 use Spiral\Idempotency\Guarantee;
 use Spiral\Idempotency\Http\HttpKeyMiddleware;
 use Spiral\Idempotency\Http\HttpOutcomeMiddleware;
@@ -45,6 +46,12 @@ final class AnnotatedFixture
 
     #[Idempotent(storage: 'http')]
     public function fromHeader(): ResponseInterface
+    {
+        throw new \LogicException('Not invoked directly.');
+    }
+
+    #[Idempotent(storage: 'http', key: 'nope')]
+    public function unresolvableKey(string $other): ResponseInterface
     {
         throw new \LogicException('Not invoked directly.');
     }
@@ -185,12 +192,14 @@ final class IdempotencyInterceptorTest
         $interceptor = $this->interceptor();
         $handler = new CountingHandler($this->psr17);
 
+        // key: null on the attribute — the transport middleware supplies it. With no header present,
+        // HttpKeyMiddleware falls to the "key" body/query field.
         $request = $this->psr17->createServerRequest('POST', '/charge')->withParsedBody(['key' => 'from-body']);
 
         /** @var ResponseInterface $first */
-        $first = $interceptor->intercept($this->context('withKey', [], $request), $handler);
+        $first = $interceptor->intercept($this->context('fromHeader', [], $request), $handler);
         /** @var ResponseInterface $second */
-        $second = $interceptor->intercept($this->context('withKey', [], $request), $handler);
+        $second = $interceptor->intercept($this->context('fromHeader', [], $request), $handler);
 
         Assert::same($handler->calls, 1);
         Assert::same($first->getHeaderLine('Idempotency-Key'), 'from-body');
@@ -240,6 +249,28 @@ final class IdempotencyInterceptorTest
 
         Assert::same($response->getStatusCode(), 400);
         Assert::string((string) $response->getBody())->contains('missing_idempotency_key');
+        Assert::same($handler->calls, 0);
+    }
+
+    public function unresolvableAttributeKeyPathFailsFast(): void
+    {
+        $interceptor = $this->interceptor();
+        $handler = new CountingHandler($this->psr17);
+
+        // Explicit key-path ('nope') that resolves to nothing, AND a request carrying a header the
+        // transport fallback would otherwise pick up. The mismatch is a misconfiguration (typo in the
+        // path) and must fail fast — never silently switch the dedup basis to the header.
+        $request = $this->psr17->createServerRequest('POST', '/charge')->withHeader('Idempotency-Key', 'hdr');
+
+        $thrown = null;
+        try {
+            $interceptor->intercept($this->context('unresolvableKey', ['other' => 'x'], $request), $handler);
+        } catch (MisconfigurationException $e) {
+            $thrown = $e;
+        }
+
+        Assert::notNull($thrown);
+        // Key assertion: the header fallback did NOT kick in — the handler never ran.
         Assert::same($handler->calls, 0);
     }
 

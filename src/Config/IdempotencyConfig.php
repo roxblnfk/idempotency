@@ -56,13 +56,28 @@ final class IdempotencyConfig extends InjectableConfig
      * Ordered resolution-middleware stack for a transport (outer → inner), by class name. The
      * interceptor resolves each through the container and runs them around the storage handler.
      *
+     * An unknown transport is a misconfiguration (typo, or a bootloader enabled without its config
+     * section) and fails fast: a missing key deduplicates on nothing, silently disabling idempotency.
+     * An explicitly empty list is valid — the minimal setup where the key comes only from the attribute,
+     * with no transport middleware.
+     *
      * @param non-empty-string $transport
      * @return list<class-string<\Spiral\Idempotency\Pipeline\ResolutionMiddleware>>
+     * @throws MisconfigurationException when the transport has no configured middleware list at all
      */
     public function getTransport(string $transport): array
     {
+        \array_key_exists($transport, $this->config['transports'] ?? []) or throw new MisconfigurationException(
+            \sprintf(
+                'Transport "%s" is not configured: add a (possibly empty) middleware list under '
+                . '"transports.%s" in the idempotency config.',
+                $transport,
+                $transport,
+            ),
+        );
+
         /** @var list<class-string<\Spiral\Idempotency\Pipeline\ResolutionMiddleware>> */
-        return $this->config['transports'][$transport] ?? [];
+        return $this->config['transports'][$transport];
     }
 
     /**

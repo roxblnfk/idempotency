@@ -10,6 +10,7 @@ use Spiral\Core\ContainerScope;
 use Spiral\Core\Scope;
 use Spiral\Idempotency\Attribute\Idempotent;
 use Spiral\Idempotency\Config\IdempotencyConfig;
+use Spiral\Idempotency\Exception\MisconfigurationException;
 use Spiral\Idempotency\Exception\MissingKeyException;
 use Spiral\Idempotency\ExecuteOptions;
 use Spiral\Idempotency\IdempotencyContext;
@@ -102,10 +103,14 @@ final class IdempotencyInterceptor implements InterceptorInterface
     }
 
     /**
-     * Resolve the key from the attribute's arg-path (dot-notation over the call arguments), or null when
-     * absent — letting a transport middleware extract it instead.
+     * Resolve the key from the attribute's arg-path (dot-notation over the call arguments). A null result
+     * is returned only for `key: null` — letting a transport middleware extract the key instead. An
+     * explicit `key` path is a contract ("the key is here"): failing to resolve it is a misconfiguration
+     * (typo in the path, or a non-scalar value), so we fail fast rather than silently falling back to the
+     * transport and deduplicating on a different basis than the author intended.
      *
      * @return non-empty-string|null
+     * @throws MisconfigurationException when an explicit `key` path resolves to nothing
      */
     private function keyFromArguments(Idempotent $attribute, CallContextInterface $context): ?string
     {
@@ -115,7 +120,12 @@ final class IdempotencyInterceptor implements InterceptorInterface
 
         $raw = $this->dotGet($context->getArguments(), $attribute->key);
 
-        return $raw === null ? null : $this->keys->resolve($raw);
+        return $raw !== null ? $this->keys->resolve($raw) : throw new MisconfigurationException(\sprintf(
+            'Idempotency key path "%s" resolved to nothing for %s; available top-level arguments: %s.',
+            $attribute->key,
+            (string) $context->getTarget(),
+            \implode(', ', \array_keys($context->getArguments())) ?: '(none)',
+        ));
     }
 
     /**
