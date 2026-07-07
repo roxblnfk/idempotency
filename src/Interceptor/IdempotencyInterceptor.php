@@ -21,7 +21,6 @@ use Spiral\Idempotency\Pipeline\Pipeline;
 use Spiral\Idempotency\Pipeline\ResolutionMiddleware;
 use Spiral\Interceptors\Context\CallContextInterface;
 use Spiral\Interceptors\HandlerInterface;
-use Spiral\Interceptors\InterceptorInterface;
 
 /**
  * Makes controller/handler actions idempotent declaratively via {@see Idempotent}.
@@ -41,7 +40,7 @@ use Spiral\Interceptors\InterceptorInterface;
  *
  * @api
  */
-final class IdempotencyInterceptor implements InterceptorInterface
+final class IdempotencyInterceptor implements IdempotencyInterceptorInterface
 {
     /**
      * This transport's resolution stack, assembled once and reused: the middleware are stateless
