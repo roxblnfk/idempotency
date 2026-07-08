@@ -58,6 +58,27 @@ final class IdempotencyRegistryTest
         $registry->register('orders', $this->driver(Guarantee::AtLeastOnce), Guarantee::ExactlyOnce);
     }
 
+    public function atLeastOnceDriverCannotBackAtMostOnceAlias(): never
+    {
+        // A lease driver (AtLeastOnce) re-runs on retry — the opposite of the "≤ once, refuse the
+        // duplicate" contract an AtMostOnce alias declares. Incomparable axes → fail-fast.
+        $registry = new IdempotencyRegistry();
+
+        Expect::exception(MisconfigurationException::class)->withMessageContaining('AtMostOnce');
+
+        $registry->register('guard', $this->driver(Guarantee::AtLeastOnce), Guarantee::AtMostOnce);
+    }
+
+    public function exactlyOnceDriverMaySatisfyAtMostOnceAlias(): void
+    {
+        // Only ExactlyOnce carries both axes, so an inbox driver can back an AtMostOnce alias.
+        $registry = new IdempotencyRegistry();
+
+        $registry->register('guard', $this->driver(Guarantee::ExactlyOnce), Guarantee::AtMostOnce);
+
+        Assert::true($registry->has('guard'));
+    }
+
     public function unknownAliasThrows(): never
     {
         Expect::exception(MisconfigurationException::class);

@@ -24,10 +24,12 @@ final class Schema
     {
         CycleSchema::declare($db, 'idempotency'); // lease (AtLeastOnce)
         CycleSchema::declareInbox($db, 'inbox');  // inbox (ExactlyOnce)
+        CycleSchema::declareAtMostOnce($db, 'idempotency_at_most_once'); // dedup-guard (AtMostOnce)
         self::ledger($db);
 
         $db->delete('idempotency')->run();
         $db->delete('inbox')->run();
+        $db->delete('idempotency_at_most_once')->run();
         $db->delete('ledger')->run();
     }
 

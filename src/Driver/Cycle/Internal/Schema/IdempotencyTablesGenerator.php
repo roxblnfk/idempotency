@@ -9,6 +9,7 @@ use Cycle\Schema\Definition\Field;
 use Cycle\Schema\GeneratorInterface;
 use Cycle\Schema\Registry;
 use Spiral\Idempotency\Config\IdempotencyConfig;
+use Spiral\Idempotency\Driver\Cycle\CycleAtMostOnceConfig;
 use Spiral\Idempotency\Driver\Cycle\CycleInboxConfig;
 use Spiral\Idempotency\Driver\Cycle\CycleLeaseConfig;
 use Spiral\Idempotency\Driver\Cycle\CycleSchema;
@@ -38,6 +39,7 @@ final class IdempotencyTablesGenerator implements GeneratorInterface
             $definition = match (true) {
                 $storage instanceof CycleLeaseConfig => CycleSchema::lease(),
                 $storage instanceof CycleInboxConfig => CycleSchema::inbox(),
+                $storage instanceof CycleAtMostOnceConfig => CycleSchema::atMostOnce(),
                 default => null,
             };
 
@@ -45,7 +47,7 @@ final class IdempotencyTablesGenerator implements GeneratorInterface
                 continue;
             }
 
-            /** @var CycleLeaseConfig|CycleInboxConfig $storage */
+            /** @var CycleLeaseConfig|CycleInboxConfig|CycleAtMostOnceConfig $storage */
             $connection = $storage->connection;
             $table = $storage->table;
 

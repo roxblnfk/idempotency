@@ -57,6 +57,16 @@ final class CycleSchema
     }
 
     /**
+     * Backend-neutral definition of the at-most-once dedup-guard table. Identical to {@see self::inbox()}
+     * (`key` PK, nullable `result`, `create_time`): the marker is terminal from INSERT, so no lease
+     * columns are needed, and the shared shape keeps the optional result cache forward-compatible.
+     */
+    public static function atMostOnce(): TableDefinition
+    {
+        return self::inbox();
+    }
+
+    /**
      * Create (or sync) the lease table on the given connection.
      *
      * @param non-empty-string $table
@@ -74,6 +84,16 @@ final class CycleSchema
     public static function declareInbox(DatabaseInterface $db, string $table = 'inbox'): void
     {
         self::render(self::schema($db, $table), self::inbox());
+    }
+
+    /**
+     * Create (or sync) the at-most-once dedup-guard table on the given connection.
+     *
+     * @param non-empty-string $table
+     */
+    public static function declareAtMostOnce(DatabaseInterface $db, string $table = 'idempotency_at_most_once'): void
+    {
+        self::render(self::schema($db, $table), self::atMostOnce());
     }
 
     private static function render(AbstractTable $schema, TableDefinition $definition): void

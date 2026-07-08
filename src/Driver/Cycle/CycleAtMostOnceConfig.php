@@ -1,0 +1,58 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Spiral\Idempotency\Driver\Cycle;
+
+use Spiral\Idempotency\Config\StorageConfig;
+use Spiral\Idempotency\Driver\Cycle\Internal\CycleAtMostOnceFactory;
+use Spiral\Idempotency\Guarantee;
+use Spiral\Idempotency\StorageFactoryInterface;
+
+/**
+ * Data-only config for an AtMostOnce dedup-guard over a Cycle DBAL connection.
+ *
+ * The dedup marker commits before the effect and is never removed, so the effect runs at most once and
+ * a duplicate is *refused* rather than re-run (a repeat is therefore NOT safe to retry). This guards
+ * the effect (≤ 1) but does not cache the answer by default: a duplicate gets `null`.
+ *
+ * Set {@see $cacheResult} to also store and replay the operation result — best-effort only: the marker
+ * and the result are not committed atomically, so a crash between them loses the cache (not the dedup).
+ * Atomic marker + result is the upgrade to {@see \Spiral\Idempotency\Driver\Cycle\CycleInboxConfig}.
+ *
+ * Security: with {@see $cacheResult} on, results are (de)serialized by the storage's
+ * {@see \Spiral\Serializer\SerializerInterface}; the default {@see \Spiral\Serializer\Serializer\PhpSerializer}
+ * restores them via `unserialize()` on replay, so the table is the trust boundary — bind a JSON
+ * serializer if several services or roles write into it.
+ *
+ * @api
+ */
+final class CycleAtMostOnceConfig extends StorageConfig
+{
+    /**
+     * @param string|null $connection DBAL database name (null = the default database)
+     * @param non-empty-string $table dedup-guard table
+     * @param bool $cacheResult store the operation result and best-effort replay it on a duplicate
+     *        (default off: a duplicate gets `null`)
+     * @param Guarantee $guarantee declared guarantee (must be backable by the at-most-once driver)
+     */
+    public function __construct(
+        public readonly ?string $connection = null,
+        public readonly string $table = 'idempotency_at_most_once',
+        public readonly bool $cacheResult = false,
+        public readonly Guarantee $guarantee = Guarantee::AtMostOnce,
+    ) {}
+
+    public function guarantee(): Guarantee
+    {
+        return $this->guarantee;
+    }
+
+    /**
+     * @return class-string<StorageFactoryInterface>
+     */
+    public function factory(): string
+    {
+        return CycleAtMostOnceFactory::class;
+    }
+}

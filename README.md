@@ -31,13 +31,17 @@ Optional packages:
 **Exactly-once delivery is impossible**: between committing a side-effect and recording its
 completion there is always a crash window, so any retry may re-run the effect. What is achievable:
 
-| Guarantee | Mechanism | When |
-|---|---|---|
-| **AtLeastOnce** | Lease: atomic conditional insert + fencing-token CAS; the result is cached and replayed | Always. The side-effect may repeat inside the crash window |
+| Guarantee                | Mechanism                                                                                     | When                                                                      |
+|--------------------------|-----------------------------------------------------------------------------------------------|---------------------------------------------------------------------------|
+| **AtLeastOnce**          | Lease: atomic conditional insert + fencing-token CAS; the result is cached and replayed       | Always. The side-effect may repeat inside the crash window                |
+| **AtMostOnce**           | Dedup-guard: the marker commits *before* the effect and is never removed, so a duplicate is **refused** (not re-run) | When losing the effect is safer than repeating it; a repeat is not safe to retry |
 | **ExactlyOnce** (effect) | Inbox: `INSERT ... ON CONFLICT DO NOTHING` + the side-effect commit in **one DB transaction** | Only when the side-effect writes to the same database as the inbox record |
 
 Use the lease for non-transactional effects (calling a payment gateway, sending an email) and the
-inbox when the whole effect lives in your database (creating an order).
+inbox when the whole effect lives in your database (creating an order). The dedup-guard is for
+fire-and-forget jobs/events where the effect must run **at most once** and a crash between marker and
+effect may lose it — a duplicate gets `null` (or, with `cacheResult: true`, a best-effort cached
+result: the marker and the result are not committed atomically, so replay is not guaranteed).
 
 ### Quick start
 
@@ -163,21 +167,21 @@ By default `HttpKeyMiddleware` reads the `Idempotency-Key` header, then the `key
 #[Idempotent(storage: 'payments', key: 'command.orderId', lockTtl: 60, ttl: 86400, scope: null)]
 ```
 
-| Parameter | Meaning |
-|---|---|
-| `storage` | Semantic alias from the config — the only infrastructure reference in business code |
-| `key` | Dot-notation path over the **call arguments**; `null` lets a transport middleware supply the key (HTTP header/field). A path that resolves to nothing fails fast |
-| `lockTtl` | Override of the PROCESSING lock TTL, seconds (lease driver only) |
-| `ttl` | Override of the completed-record retention TTL, seconds |
-| `scope` | Key namespace, see below |
+| Parameter | Meaning                                                                                                                                                          |
+|-----------|------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `storage` | Semantic alias from the config — the only infrastructure reference in business code                                                                              |
+| `key`     | Dot-notation path over the **call arguments**; `null` lets a transport middleware supply the key (HTTP header/field). A path that resolves to nothing fails fast |
+| `lockTtl` | Override of the PROCESSING lock TTL, seconds (lease driver only)                                                                                                 |
+| `ttl`     | Override of the completed-record retention TTL, seconds                                                                                                          |
+| `scope`   | Key namespace, see below                                                                                                                                         |
 
 Keys are namespaced by **operation identity** so that the same client key sent to two different
 endpoints never replays a foreign response:
 
-| `scope` | Key space |
-|---|---|
-| `null` (default) | `Controller::method` — safe per-operation isolation |
-| `'payment-flow'` | Explicit name — intentionally shared by several endpoints |
+| `scope`                    | Key space                                                        |
+|----------------------------|------------------------------------------------------------------|
+| `null` (default)           | `Controller::method` — safe per-operation isolation              |
+| `'payment-flow'`           | Explicit name — intentionally shared by several endpoints        |
 | `Idempotent::SCOPE_GLOBAL` | No namespacing — the client is responsible for global uniqueness |
 
 ### ExactlyOnce: write through the transaction
@@ -244,11 +248,11 @@ composing multi-step chains).
 An exception thrown by the operation is classified into one of three kinds — deterministic outcome
 and "will a retry help" are independent axes:
 
-| Kind | Default mapping | Lease reaction |
-|---|---|---|
-| **Domain** | any other `\Exception` | Cached as a valid negative outcome, replayed on retry |
-| **Infrastructure** | `\Error`, or `\Exception` implementing `RetryableInterface` | The key is released; the transport/client retries |
-| **Bug** | Only by explicit configuration (`DefaultFailureClassifier(bugExceptions: [...])`) | The key is released; no re-enqueue — report and fix |
+| Kind               | Default mapping                                                                   | Lease reaction                                        |
+|--------------------|-----------------------------------------------------------------------------------|-------------------------------------------------------|
+| **Domain**         | any other `\Exception`                                                            | Cached as a valid negative outcome, replayed on retry |
+| **Infrastructure** | `\Error`, or `\Exception` implementing `RetryableInterface`                       | The key is released; the transport/client retries     |
+| **Bug**            | Only by explicit configuration (`DefaultFailureClassifier(bugExceptions: [...])`) | The key is released; no re-enqueue — report and fix   |
 
 A cached domain failure is replayed as `CachedDomainFailureException` carrying the original class
 name and message. For an **exact-type** replay, implement `ReplayableFailureInterface` on the

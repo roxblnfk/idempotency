@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Spiral\Idempotency\Tests\Acceptance\Common;
 
+use Cycle\Database\DatabaseInterface;
 use Cycle\Database\DatabaseProviderInterface;
 use Cycle\ORM\Factory;
 use Cycle\ORM\ORM;
@@ -16,6 +17,7 @@ use Spiral\Idempotency\Config\IdempotencyConfig;
 use Spiral\Idempotency\Driver\Cycle\CycleContext;
 use Spiral\Idempotency\Driver\Cycle\CycleInboxConfig;
 use Spiral\Idempotency\Driver\Cycle\CycleLeaseConfig;
+use Spiral\Idempotency\Driver\Cycle\Internal\CycleAtMostOnceDriver;
 use Spiral\Idempotency\Driver\Cycle\Internal\CycleInboxDriver;
 use Spiral\Idempotency\Driver\Cycle\Internal\CycleLeaseStorage;
 use Spiral\Idempotency\Exception\LeaseLostException;
@@ -49,6 +51,7 @@ use Testo\Expect;
  */
 #[Covers(CycleLeaseStorage::class)]
 #[Covers(CycleInboxDriver::class)]
+#[Covers(CycleAtMostOnceDriver::class)]
 #[Covers(IdempotencyBootloader::class)]
 #[Covers(IdempotencyConfig::class)]
 abstract class CycleStorageTestCase extends DatabaseTestCase
@@ -329,6 +332,88 @@ abstract class CycleStorageTestCase extends DatabaseTestCase
         Assert::same($calls, 1);
     }
 
+    // ----------------------------------------------------------------- at-most-once (dedup-guard) driver
+
+    public function atMostOnceRunsEffectOnce(): void
+    {
+        $key = $this->key();
+        $driver = $this->atMostOnceDriver();
+        $calls = 0;
+        $op = function (IdempotencyContext $c) use (&$calls, $key): string {
+            ++$calls;
+            $this->db()->insert('ledger')->values(['note' => $key])->run();
+            return 'v:' . $c->getKey();
+        };
+
+        // First run: the effect runs and the value reaches the caller.
+        Assert::same($driver->execute($key, $op), 'v:' . $key);
+        // Duplicate: refused (not re-run). The default (no result cache) signals "already processed"
+        // with null, and the effect ran exactly once.
+        Assert::null($driver->execute($key, $op));
+        Assert::same($this->ledgerCount($key), 1);
+        Assert::same($calls, 1);
+    }
+
+    public function atMostOnceDoesNotReRunAfterFailure(): void
+    {
+        // The contract test: the marker commits BEFORE the effect and is never removed, so a crash in
+        // the effect loses it (≤ once) and a retry is refused rather than re-running the partial effect.
+        $key = $this->key();
+        $driver = $this->atMostOnceDriver();
+        $calls = 0;
+        $op = function () use (&$calls, $key): string {
+            ++$calls;
+            $this->db()->insert('ledger')->values(['note' => $key])->run();
+            throw new \RuntimeException('boom');
+        };
+
+        // The throwable propagates to the caller (fire-and-forget: the driver does not swallow it)...
+        try {
+            $driver->execute($key, $op);
+            Assert::fail('the operation must propagate its RuntimeException');
+        } catch (\RuntimeException) {
+            // expected
+        }
+
+        // ...but the marker persists, so the retry is refused: no re-run, exactly one partial effect.
+        Assert::null($driver->execute($key, $op));
+        Assert::same($this->ledgerCount($key), 1);
+        Assert::same($calls, 1);
+    }
+
+    public function atMostOnceRejectsAmbientTransaction(): never
+    {
+        // An open outer transaction would tie the marker to the outer commit/rollback and break "≤ once".
+        $key = $this->key();
+        $driver = $this->atMostOnceDriver();
+
+        Expect::exception(MisconfigurationException::class)->withMessageContaining('autocommit');
+
+        $this->db()->begin();
+        try {
+            $driver->execute($key, static fn(): string => 'never');
+        } finally {
+            $this->db()->rollback();
+        }
+    }
+
+    public function atMostOnceBestEffortResultReplaysWhenCached(): void
+    {
+        $key = $this->key();
+        $driver = $this->atMostOnceDriver(cacheResult: true);
+        $calls = 0;
+        $op = static function () use (&$calls): string {
+            ++$calls;
+            return 'v';
+        };
+
+        // With the result cache on, the first run stores the value...
+        Assert::same($driver->execute($key, $op), 'v');
+        // ...and the duplicate replays it from the cache without re-running the operation.
+        Assert::same($driver->execute($key, $op), 'v');
+        Assert::same($calls, 1);
+    }
+
     // ----------------------------------------------------------------- bootloader wiring
 
     public function wiresLeaseAndInboxDriversFromConfig(): void
@@ -424,6 +509,16 @@ abstract class CycleStorageTestCase extends DatabaseTestCase
         $transaction = new TransactionImpl(new ORM(new Factory($manager), new Schema([])), $manager);
 
         return new CycleInboxDriver(static fn(): TransactionImpl => $transaction, new MutableClock());
+    }
+
+    private function atMostOnceDriver(bool $cacheResult = false): CycleAtMostOnceDriver
+    {
+        return new CycleAtMostOnceDriver(
+            fn(): DatabaseInterface => $this->db(),
+            new MutableClock(),
+            table: 'idempotency_at_most_once',
+            cacheResult: $cacheResult,
+        );
     }
 
     private function buildRegistry(IdempotencyConfig $config, ?SerializerInterface $serializer = null): IdempotencyRegistry
