@@ -1,0 +1,288 @@
+# Idempotency
+
+The package protects operations from duplicated side-effects on retries in Spiral Framework
+applications. It ships two mechanisms with different guarantees — an **AtLeastOnce** lease
+(lock + fencing token + response cache) and an **ExactlyOnce-effect** transactional inbox —
+behind one declarative `#[Idempotent]` attribute and one programmatic API.
+
+## Installation
+
+```bash
+composer require spiral/idempotency
+```
+
+[![PHP](https://img.shields.io/packagist/php-v/spiral/idempotency.svg?style=flat-square&logo=php)](https://packagist.org/packages/spiral/idempotency)
+[![Latest Version on Packagist](https://img.shields.io/packagist/v/spiral/idempotency.svg?style=flat-square&logo=packagist)](https://packagist.org/packages/spiral/idempotency)
+[![License](https://img.shields.io/packagist/l/spiral/idempotency.svg?style=flat-square)](https://packagist.org/packages/spiral/idempotency)
+[![Total downloads](https://img.shields.io/packagist/dt/spiral/idempotency.svg?style=flat-square)](https://packagist.org/packages/spiral/idempotency/stats)
+
+Optional packages:
+
+- `cycle/database` — the bundled storage driver (lease and inbox tables over a Cycle DBAL connection);
+- `spiral/interceptors` — the declarative `#[Idempotent]` attribute via `IdempotencyInterceptor`
+  (also needs a PSR-17 factory for the HTTP middleware);
+- `spiral/cycle-bridge` — integrates the idempotency tables into the ORM schema
+  (`cycle:sync` / `cycle:migrate`).
+
+## Documentation
+
+### Two guarantees
+
+**Exactly-once delivery is impossible**: between committing a side-effect and recording its
+completion there is always a crash window, so any retry may re-run the effect. What is achievable:
+
+| Guarantee | Mechanism | When |
+|---|---|---|
+| **AtLeastOnce** | Lease: atomic conditional insert + fencing-token CAS; the result is cached and replayed | Always. The side-effect may repeat inside the crash window |
+| **ExactlyOnce** (effect) | Inbox: `INSERT ... ON CONFLICT DO NOTHING` + the side-effect commit in **one DB transaction** | Only when the side-effect writes to the same database as the inbox record |
+
+Use the lease for non-transactional effects (calling a payment gateway, sending an email) and the
+inbox when the whole effect lives in your database (creating an order).
+
+### Quick start
+
+Register the bootloaders:
+
+```php
+// app/src/Application/Kernel.php
+public function defineBootloaders(): array
+{
+    return [
+        // ...
+        \Spiral\Idempotency\Bootloader\IdempotencyBootloader::class,
+        // opt-in: HTTP wiring for the #[Idempotent] attribute
+        \Spiral\Idempotency\Bootloader\HttpIdempotencyBootloader::class,
+        // opt-in: idempotency tables in the ORM schema (cycle:sync / cycle:migrate)
+        \Spiral\Idempotency\Bootloader\CycleSchemaBootloader::class,
+    ];
+}
+```
+
+Describe the storages and the HTTP middleware stack:
+
+```php
+// app/config/idempotency.php
+use Spiral\Idempotency\Driver\Cycle\CycleInboxConfig;
+use Spiral\Idempotency\Driver\Cycle\CycleLeaseConfig;
+use Spiral\Idempotency\Http\HttpKeyMiddleware;
+use Spiral\Idempotency\Http\HttpOutcomeMiddleware;
+
+return [
+    'default' => 'payments',
+
+    // Resolution middleware, outer → inner. The outcome middleware sits OUTERMOST: it marshals
+    // the response (replay headers, Locked → 409, missing key → 400); the key middleware inside
+    // it extracts and normalizes the key.
+    'transports' => [
+        'http' => [
+            HttpOutcomeMiddleware::class,
+            HttpKeyMiddleware::class,
+        ],
+    ],
+
+    // Semantic aliases: the handler code names an alias, the driver and the declared guarantee
+    // live here. The declared guarantee is verified against the driver capability at bootstrap.
+    'storages' => [
+        'payments' => new CycleLeaseConfig(
+            table: 'idempotency_lease',
+            lockTtl: 30,        // seconds the PROCESSING lock is held
+            retentionTtl: 3600, // seconds the cached result is kept
+        ),
+        'orders' => new CycleInboxConfig(
+            table: 'idempotency_inbox',
+        ),
+    ],
+];
+```
+
+Add the interceptor to your domain core and mark an action:
+
+```php
+use Spiral\Idempotency\Interceptor\IdempotencyInterceptorInterface;
+
+final class AppBootloader extends DomainBootloader
+{
+    protected const SINGLETONS = [HandlerInterface::class => [self::class, 'domainCore']];
+
+    protected const INTERCEPTORS = [
+        // ...
+        IdempotencyInterceptorInterface::class,
+    ];
+}
+```
+
+```php
+use Spiral\Idempotency\Attribute\Idempotent;
+
+final class PaymentController
+{
+    #[Route(route: '/payments/charge', methods: 'POST')]
+    #[Idempotent(storage: 'payments')]
+    public function charge(): ResponseInterface
+    {
+        // charge the gateway, return the response — it will be cached and replayed
+    }
+}
+```
+
+Create the tables with the project's normal workflow: `php app.php cycle:sync` (or generate a
+migration with `cycle:migrate`).
+
+> [!NOTE]
+> The interceptor is bound in the `http` dispatcher scope; the root container holds a forwarding
+> proxy under `IdempotencyInterceptorInterface`, so a domain core built in any scope keeps working.
+> Invoking the interceptor outside a transport scope fails fast with a friendly
+> `MisconfigurationException`.
+
+### HTTP behaviour
+
+The client generates a key and sends it with every retry of the same operation:
+
+```bash
+curl -X POST /payments/charge -H 'Idempotency-Key: pay-42' -d 'amount=500'
+```
+
+| Situation | Response |
+|---|---|
+| First call | The action runs; the whole response is snapshotted. Headers: `Idempotency-Key`, `Idempotency-Replay: false` |
+| Retry after completion | The cached response is replayed byte-identically, `Idempotency-Replay: true`; the action does **not** run |
+| Retry while the first call is still in flight | `409 Conflict` + `Retry-After` (lease storages) |
+| No key supplied | `400 Bad Request` with a JSON body |
+| The action responded `5xx` | Not cached: the key is released and a retry re-runs the operation (configurable predicate of `HttpOutcomeMiddleware`) |
+
+By default `HttpKeyMiddleware` reads the `Idempotency-Key` header, then the `key` body/query field
+(both names are constructor-configurable).
+
+### The `#[Idempotent]` attribute
+
+```php
+#[Idempotent(storage: 'payments', key: 'command.orderId', lockTtl: 60, ttl: 86400, scope: null)]
+```
+
+| Parameter | Meaning |
+|---|---|
+| `storage` | Semantic alias from the config — the only infrastructure reference in business code |
+| `key` | Dot-notation path over the **call arguments**; `null` lets a transport middleware supply the key (HTTP header/field). A path that resolves to nothing fails fast |
+| `lockTtl` | Override of the PROCESSING lock TTL, seconds (lease driver only) |
+| `ttl` | Override of the completed-record retention TTL, seconds |
+| `scope` | Key namespace, see below |
+
+Keys are namespaced by **operation identity** so that the same client key sent to two different
+endpoints never replays a foreign response:
+
+| `scope` | Key space |
+|---|---|
+| `null` (default) | `Controller::method` — safe per-operation isolation |
+| `'payment-flow'` | Explicit name — intentionally shared by several endpoints |
+| `Idempotent::SCOPE_GLOBAL` | No namespacing — the client is responsible for global uniqueness |
+
+### ExactlyOnce: write through the transaction
+
+The inbox driver opens a database transaction that carries both the dedup record and your
+side-effect. Inside the operation, narrow the context to `CycleContext` and write through it —
+this is the contract that makes the effect exactly-once:
+
+```php
+use Spiral\Idempotency\Driver\Cycle\CycleContext;
+use Spiral\Idempotency\IdempotencyContext;
+
+#[Idempotent(storage: 'orders', key: 'command.orderId')]
+public function place(PlaceOrder $command, IdempotencyContext $ctx): array
+{
+    \assert($ctx instanceof CycleContext);
+
+    // ORM entities: a scoped Unit of Work flushed inside the transaction
+    $ctx->entityManager()->persist(new Order(...));
+    // ...or raw DBAL through the transactional connection
+    $ctx->database()->insert('order_events')->values([...])->run();
+
+    return ['status' => 'placed'];
+}
+```
+
+Crash before `COMMIT` → everything rolls back → a retry is clean. Crash after `COMMIT` → the retry
+sees the dedup conflict, skips the operation and replays the stored result. No window.
+
+> [!IMPORTANT]
+> The guarantee only holds for effects written through the transactional connection. Anything
+> external — an HTTP call, a message queue, another database — degrades the operation to
+> AtLeastOnce no matter which driver runs it.
+
+### Programmatic usage
+
+When the key is already known, skip the attribute and call the driver directly:
+
+```php
+use Spiral\Idempotency\ExecuteOptions;
+use Spiral\Idempotency\IdempotencyContext;
+use Spiral\Idempotency\IdempotencyRegistry;
+
+public function __construct(
+    private readonly IdempotencyRegistry $registry,
+) {}
+
+public function handle(string $transactionId): Receipt
+{
+    return $this->registry->get('payments')->execute(
+        $transactionId,
+        static fn(IdempotencyContext $ctx): Receipt => /* the operation */,
+        new ExecuteOptions(lockTtl: 60, ttl: 86400),
+    );
+}
+```
+
+The programmatic path applies no automatic namespacing — compose the final key yourself
+(`KeyResolverInterface` is available as a service and supports `parentKey` hierarchies for
+composing multi-step chains).
+
+### Failure classification
+
+An exception thrown by the operation is classified into one of three kinds — deterministic outcome
+and "will a retry help" are independent axes:
+
+| Kind | Default mapping | Lease reaction |
+|---|---|---|
+| **Domain** | any other `\Exception` | Cached as a valid negative outcome, replayed on retry |
+| **Infrastructure** | `\Error`, or `\Exception` implementing `RetryableInterface` | The key is released; the transport/client retries |
+| **Bug** | Only by explicit configuration (`DefaultFailureClassifier(bugExceptions: [...])`) | The key is released; no re-enqueue — report and fix |
+
+A cached domain failure is replayed as `CachedDomainFailureException` carrying the original class
+name and message. For an **exact-type** replay, implement `ReplayableFailureInterface` on the
+domain exception:
+
+```php
+final class PaymentDeclined extends \DomainException implements ReplayableFailureInterface
+{
+    public function toReplayPayload(): array
+    {
+        return ['code' => $this->code, 'reason' => $this->reason];
+    }
+
+    public static function fromReplayPayload(array $payload): static
+    {
+        return new self($payload['code'], $payload['reason']);
+    }
+}
+```
+
+> [!NOTE]
+> Over HTTP, prefer returning an error **response** for negative domain outcomes — responses are
+> snapshotted and replayed byte-identically, including the status code.
+
+### Customization
+
+- **Middleware** — both pipelines are open: implement `ResolutionMiddleware` (transport phase,
+  key extraction / outcome mapping) and list it under `transports.<name>`, or
+  `ExecutionMiddleware` (domain phase around the operation).
+- **Serializer** — cached results are serialized with `spiral/serializer` (`PhpSerializer` by
+  default); bind your own `SerializerInterface` to switch, e.g. to JSON.
+- **Classifier** — bind `FailureClassifierInterface` to replace the default failure mapping.
+- **Key policy** — bind `KeyResolverInterface` to change normalization, hashing and hierarchy
+  composition.
+- **Schema** — role names of the generated ORM tables are customizable via
+  `SchemaNamingInterface`; table names live in the storage configs.
+
+> [!IMPORTANT]
+> The default `PhpSerializer` unserializes blobs read from the idempotency tables. The trust
+> boundary is the table itself: if several services or roles can write to that database, bind a
+> JSON serializer and keep the operation results JSON-safe.
