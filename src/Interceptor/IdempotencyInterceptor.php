@@ -145,12 +145,17 @@ final class IdempotencyInterceptor implements IdempotencyInterceptorInterface
 
         $raw = $this->dotGet($context->getArguments(), $attribute->key);
 
-        return $raw !== null ? $this->keys->resolve($raw, $scope) : throw new MisconfigurationException(\sprintf(
-            'Idempotency key path "%s" resolved to nothing for %s; available top-level arguments: %s.',
-            $attribute->key,
-            (string) $context->getTarget(),
-            \implode(', ', \array_keys($context->getArguments())) ?: '(none)',
-        ));
+        return $raw !== null ? $this->keys->resolve($raw, $scope) : throw new MisconfigurationException(
+            \sprintf(
+                'Idempotency key path "%s" resolved to nothing for %s; available top-level arguments: %s.',
+                $attribute->key,
+                (string) $context->getTarget(),
+                \implode(', ', \array_keys($context->getArguments())) ?: '(none)',
+            ),
+            'Point the `key` arg-path of #[Idempotent] at an existing scalar argument (dot-notation '
+            . 'over the call arguments), or set `key: null` to let a transport middleware supply the '
+            . 'key (e.g. the Idempotency-Key header).',
+        );
     }
 
     /**

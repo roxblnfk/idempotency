@@ -68,10 +68,11 @@ final class IdempotencyConfig extends InjectableConfig
     public function getTransport(string $transport): array
     {
         \array_key_exists($transport, $this->config['transports'] ?? []) or throw new MisconfigurationException(
+            \sprintf('Transport "%s" is not configured under "transports.%s" in the idempotency config.', $transport, $transport),
             \sprintf(
-                'Transport "%s" is not configured: add a (possibly empty) middleware list under '
-                . '"transports.%s" in the idempotency config.',
-                $transport,
+                "Add a middleware list for the transport in `config/idempotency.php`:\n\n"
+                . "```php\n'transports' => [\n    '%s' => [/* ResolutionMiddleware class names, outer → inner */],\n],\n```\n\n"
+                . 'An explicitly empty list is valid: the key must then come from the #[Idempotent] attribute.',
                 $transport,
             ),
         );
@@ -87,6 +88,11 @@ final class IdempotencyConfig extends InjectableConfig
     {
         return $this->getStorages()[$alias] ?? throw new MisconfigurationException(
             \sprintf('No idempotency storage configured under alias "%s".', $alias),
+            \sprintf(
+                'Register the alias under `storages` in `config/idempotency.php`, e.g. '
+                . "`'%s' => new CycleLeaseConfig(...)` or `new CycleInboxConfig(...)`.",
+                $alias,
+            ),
         );
     }
 

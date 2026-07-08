@@ -31,12 +31,11 @@ final class CycleLeaseFactory implements StorageFactoryInterface
     public function create(StorageConfig $config, StorageServices $services): IdempotencyInterface
     {
         if (!$config instanceof CycleLeaseConfig) {
-            throw new MisconfigurationException(\sprintf(
-                '%s expects %s, got %s.',
-                self::class,
-                CycleLeaseConfig::class,
-                $config::class,
-            ));
+            throw new MisconfigurationException(
+                \sprintf('%s expects %s, got %s.', self::class, CycleLeaseConfig::class, $config::class),
+                'A storage config and its factory() must pair up: CycleLeaseConfig → CycleLeaseFactory, '
+                . 'CycleInboxConfig → CycleInboxFactory. Check the factory() method of the config class.',
+            );
         }
 
         $database = $this->databases->database($config->connection);

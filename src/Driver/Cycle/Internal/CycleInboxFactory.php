@@ -36,12 +36,11 @@ final class CycleInboxFactory implements StorageFactoryInterface
     public function create(StorageConfig $config, StorageServices $services): IdempotencyInterface
     {
         if (!$config instanceof CycleInboxConfig) {
-            throw new MisconfigurationException(\sprintf(
-                '%s expects %s, got %s.',
-                self::class,
-                CycleInboxConfig::class,
-                $config::class,
-            ));
+            throw new MisconfigurationException(
+                \sprintf('%s expects %s, got %s.', self::class, CycleInboxConfig::class, $config::class),
+                'A storage config and its factory() must pair up: CycleInboxConfig → CycleInboxFactory, '
+                . 'CycleLeaseConfig → CycleLeaseFactory. Check the factory() method of the config class.',
+            );
         }
 
         return new CycleInboxDriver(

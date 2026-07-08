@@ -63,10 +63,10 @@ final class HttpIdempotencyBootloader extends Bootloader
                 IdempotencyInterceptorInterface::class,
                 false,
                 static fn(): never => throw new MisconfigurationException(
-                    'IdempotencyInterceptorInterface is used outside of a transport dispatcher scope: '
-                    . 'the real interceptor is bound per transport (HttpIdempotencyBootloader binds the '
-                    . 'http flavor in the `http` scope). Invoke it while the transport scope is active, '
-                    . 'or register the integration bootloader for this transport.',
+                    'IdempotencyInterceptorInterface is used outside of a transport dispatcher scope.',
+                    'The real interceptor is bound per transport: HttpIdempotencyBootloader binds the '
+                    . 'http flavor inside the `http` scope. Invoke the interceptor while a transport '
+                    . 'scope is active, or register the integration bootloader for this transport.',
                 ),
             ),
         ];

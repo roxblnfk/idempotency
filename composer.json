@@ -15,7 +15,8 @@
         "psr/clock": "^1.0",
         "psr/log": "^2.0 || ^3.0",
         "spiral/boot": "^3.15",
-        "spiral/serializer": "^3.15"
+        "spiral/serializer": "^3.15",
+        "yiisoft/friendly-exception": "^1.1"
     },
     "require-dev": {
         "testo/testo": "^0.10.20",

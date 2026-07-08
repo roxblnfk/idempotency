@@ -24,13 +24,18 @@ final class IdempotencyRegistry
     public function register(string $alias, IdempotencyInterface $driver, Guarantee $declared): void
     {
         if ($driver instanceof GuaranteeProviderInterface && !$driver->guarantee()->satisfies($declared)) {
-            throw new MisconfigurationException(\sprintf(
-                'Storage alias "%s" declares guarantee %s, but driver %s can only provide %s.',
-                $alias,
-                $declared->name,
-                $driver::class,
-                $driver->guarantee()->name,
-            ));
+            throw new MisconfigurationException(
+                \sprintf(
+                    'Storage alias "%s" declares guarantee %s, but driver %s can only provide %s.',
+                    $alias,
+                    $declared->name,
+                    $driver::class,
+                    $driver->guarantee()->name,
+                ),
+                'Lower the declared guarantee of the alias to the driver\'s capability '
+                . '(e.g. `Guarantee::AtLeastOnce` for a lease driver), or back the alias with a driver '
+                . 'that can provide it (the inbox driver for ExactlyOnce).',
+            );
         }
 
         /** @var non-empty-string $alias */
@@ -41,6 +46,11 @@ final class IdempotencyRegistry
     {
         return $this->drivers[$alias] ?? throw new MisconfigurationException(
             \sprintf('No idempotency storage registered under alias "%s".', $alias),
+            \sprintf(
+                'Register the "%s" alias under `storages` in `config/idempotency.php`, or fix the '
+                . '`storage:` argument of the #[Idempotent] attribute.',
+                $alias,
+            ),
         );
     }
 
