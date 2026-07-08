@@ -95,21 +95,22 @@ return [
 ];
 ```
 
-Add the interceptor to your domain core and mark an action:
+Add **one line** to your existing domain-core interceptor list — reference the
+`IdempotencyInterceptorInterface` alias, not a concrete class:
 
 ```php
 use Spiral\Idempotency\Interceptor\IdempotencyInterceptorInterface;
 
 final class AppBootloader extends DomainBootloader
 {
-    protected const SINGLETONS = [HandlerInterface::class => [self::class, 'domainCore']];
-
     protected const INTERCEPTORS = [
-        // ...
+        // ...your existing interceptors (Cycle, Guard, ...) — innermost after auth:
         IdempotencyInterceptorInterface::class,
     ];
 }
 ```
+
+Mark an action:
 
 ```php
 use Spiral\Idempotency\Attribute\Idempotent;
@@ -129,10 +130,13 @@ Create the tables with the project's normal workflow: `php app.php cycle:sync` (
 migration with `cycle:migrate`).
 
 > [!NOTE]
-> The interceptor is bound in the `http` dispatcher scope; the root container holds a forwarding
-> proxy under `IdempotencyInterceptorInterface`, so a domain core built in any scope keeps working.
-> Invoking the interceptor outside a transport scope fails fast with a friendly
-> `MisconfigurationException`.
+> Reference the `IdempotencyInterceptorInterface` **alias**, with no scope. The `DomainBootloader`
+> interceptor list is resolved in the root container, where the alias is a forwarding proxy: on every
+> call it resolves the real, transport-flavored interceptor from the active dispatcher scope (the
+> `http` scope, where `HttpIdempotencyBootloader` bound it). So the same domain core works in any
+> scope, and a future queue integration reuses the same alias. Referencing the concrete
+> `IdempotencyInterceptor` class instead would fail — it is deliberately unbound in root. Invoking the
+> proxy outside a transport scope fails fast with a friendly `MisconfigurationException`.
 
 ### HTTP behaviour
 
