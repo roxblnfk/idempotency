@@ -33,6 +33,13 @@ final class CycleInboxConfig extends StorageConfig
      *        also opens its own transaction but tolerates an outer one; {@see TransactionMode::Current}
      *        joins an already-open transaction; {@see TransactionMode::Ignore} does not manage one.
      * @param FlushMode $flushMode when the scoped Entity Manager flushes its pending changes
+     * @param int|null $retentionTtl dedup-record retention, seconds. `null` (default) keeps records
+     *        forever (the inbox's dedup guarantee never weakens; GC skips this storage). A positive
+     *        value lets {@see \Spiral\Idempotency\Driver\Cycle\CycleGarbageCollector} delete rows whose
+     *        `create_time` is older than `now - retentionTtl`.
+     *        IMPORTANT: enabling retention narrows the deduplication window — once a record is swept, a
+     *        delayed duplicate (late redelivery/replay) is no longer recognized and RE-EXECUTES. Choose
+     *        a value safely longer than the maximum expected redelivery/replay delay.
      * @param Guarantee $guarantee declared guarantee (must be backable by the inbox driver)
      */
     public function __construct(
@@ -40,6 +47,7 @@ final class CycleInboxConfig extends StorageConfig
         public readonly string $table = 'inbox',
         public readonly TransactionMode $transactionMode = TransactionMode::Exclusive,
         public readonly FlushMode $flushMode = FlushMode::BeforeCommit,
+        public readonly ?int $retentionTtl = null,
         public readonly Guarantee $guarantee = Guarantee::ExactlyOnce,
     ) {}
 

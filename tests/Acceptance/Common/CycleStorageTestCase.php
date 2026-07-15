@@ -14,9 +14,12 @@ use Cycle\Transaction\Internal\TransactionImpl;
 use Spiral\Core\Container;
 use Spiral\Idempotency\Bootloader\IdempotencyBootloader;
 use Spiral\Idempotency\Config\IdempotencyConfig;
+use Spiral\Idempotency\Driver\Cycle\CycleAtMostOnceConfig;
 use Spiral\Idempotency\Driver\Cycle\CycleContext;
+use Spiral\Idempotency\Driver\Cycle\CycleGarbageCollector;
 use Spiral\Idempotency\Driver\Cycle\CycleInboxConfig;
 use Spiral\Idempotency\Driver\Cycle\CycleLeaseConfig;
+use Spiral\Idempotency\Driver\Cycle\CycleSchema;
 use Spiral\Idempotency\Driver\Cycle\Internal\CycleAtMostOnceDriver;
 use Spiral\Idempotency\Driver\Cycle\Internal\CycleInboxDriver;
 use Spiral\Idempotency\Driver\Cycle\Internal\CycleLeaseStorage;
@@ -52,10 +55,13 @@ use Testo\Expect;
 #[Covers(CycleLeaseStorage::class)]
 #[Covers(CycleInboxDriver::class)]
 #[Covers(CycleAtMostOnceDriver::class)]
+#[Covers(CycleGarbageCollector::class)]
 #[Covers(IdempotencyBootloader::class)]
 #[Covers(IdempotencyConfig::class)]
 abstract class CycleStorageTestCase extends DatabaseTestCase
 {
+    private static int $gcSequence = 0;
+
     // ----------------------------------------------------------------- lease storage
 
     public function acquireInsertsProcessingRecord(): void
@@ -501,7 +507,154 @@ abstract class CycleStorageTestCase extends DatabaseTestCase
         Assert::same((string) $row['result'], '{"value":"v"}');
     }
 
+    // ----------------------------------------------------------------- garbage collection
+
+    // GC deletes by TIME across the WHOLE table, so — unlike the key-isolated tests above — a GC test
+    // must NEVER touch the shared tables. Each test declares its own dedicated table(s) via a unique
+    // name (see gcTable()) so its sweep cannot clobber another test's rows.
+
+    public function gcDeletesExpiredLeaseRowsKeepsLive(): void
+    {
+        $table = $this->gcTable('lease');
+        CycleSchema::declare($this->db(), $table);
+
+        $clock = new MutableClock();
+        $storage = new CycleLeaseStorage($this->db(), $clock, $table);
+        Assert::true($storage->acquire('live', 'tok-live', 1000));
+        Assert::true($storage->acquire('dead', 'tok-dead', 10));
+
+        $clock->advance(11); // the 10s lock expires; the 1000s one is still live
+
+        $config = new IdempotencyConfig(['storages' => ['gc' => new CycleLeaseConfig(table: $table)]]);
+        $gc = new CycleGarbageCollector($config, $this->manager(), $clock);
+
+        Assert::same($gc->collect(), ['gc' => 1]);
+        Assert::same($storage->read('live')?->token, 'tok-live'); // live row survives
+        Assert::null($storage->read('dead'));                     // expired row swept
+    }
+
+    public function gcSkipsInboxWithoutRetention(): void
+    {
+        $table = $this->gcTable('inbox');
+        CycleSchema::declareInbox($this->db(), $table);
+
+        $key = $this->key();
+        $clock = new MutableClock();
+        $this->db()->insert($table)
+            ->values(['key' => $key, 'create_time' => $clock->now()->getTimestamp(), 'result' => null])
+            ->run();
+
+        // retentionTtl null (default) => kept forever, GC skips this storage entirely.
+        $config = new IdempotencyConfig(['storages' => ['gc' => new CycleInboxConfig(table: $table)]]);
+        $gc = new CycleGarbageCollector($config, $this->manager(), $clock);
+
+        Assert::same($gc->collect(), []);                    // alias omitted (not swept)
+        Assert::same($this->tableRowCount($table, $key), 1); // row survives
+    }
+
+    public function gcDeletesInboxRowsPastRetention(): void
+    {
+        $table = $this->gcTable('inbox');
+        CycleSchema::declareInbox($this->db(), $table);
+
+        $clock = new MutableClock();
+        $old = $this->key('old');
+        $this->db()->insert($table)
+            ->values(['key' => $old, 'create_time' => $clock->now()->getTimestamp(), 'result' => null])
+            ->run();
+
+        $clock->advance(100);
+
+        $fresh = $this->key('fresh');
+        $this->db()->insert($table)
+            ->values(['key' => $fresh, 'create_time' => $clock->now()->getTimestamp(), 'result' => null])
+            ->run();
+
+        $config = new IdempotencyConfig(['storages' => ['gc' => new CycleInboxConfig(table: $table, retentionTtl: 60)]]);
+        $gc = new CycleGarbageCollector($config, $this->manager(), $clock);
+
+        Assert::same($gc->collect()['gc'], 1);
+        Assert::same($this->tableRowCount($table, $old), 0);   // age 100 > 60 => deleted
+        Assert::same($this->tableRowCount($table, $fresh), 1); // age 0 < 60 => survives
+    }
+
+    public function gcDeletesAtMostOnceRowsPastRetention(): void
+    {
+        $table = $this->gcTable('amo');
+        CycleSchema::declareAtMostOnce($this->db(), $table);
+
+        $clock = new MutableClock();
+        $old = $this->key('old');
+        $this->db()->insert($table)
+            ->values(['key' => $old, 'create_time' => $clock->now()->getTimestamp(), 'result' => null])
+            ->run();
+
+        $clock->advance(100);
+
+        $fresh = $this->key('fresh');
+        $this->db()->insert($table)
+            ->values(['key' => $fresh, 'create_time' => $clock->now()->getTimestamp(), 'result' => null])
+            ->run();
+
+        $config = new IdempotencyConfig(['storages' => ['gc' => new CycleAtMostOnceConfig(table: $table, retentionTtl: 60)]]);
+        $gc = new CycleGarbageCollector($config, $this->manager(), $clock);
+
+        Assert::same($gc->collect()['gc'], 1);
+        Assert::same($this->tableRowCount($table, $old), 0);   // age 100 > 60 => deleted
+        Assert::same($this->tableRowCount($table, $fresh), 1); // age 0 < 60 => survives
+    }
+
+    public function gcReturnsPerAliasCounts(): void
+    {
+        $leaseTable = $this->gcTable('lease');
+        $inboxTable = $this->gcTable('inbox');
+        CycleSchema::declare($this->db(), $leaseTable);
+        CycleSchema::declareInbox($this->db(), $inboxTable);
+
+        $clock = new MutableClock();
+
+        $lease = new CycleLeaseStorage($this->db(), $clock, $leaseTable);
+        Assert::true($lease->acquire('dead', 'td', 10));
+        Assert::true($lease->acquire('live', 'tl', 1000));
+
+        $this->db()->insert($inboxTable)
+            ->values(['key' => 'old', 'create_time' => $clock->now()->getTimestamp(), 'result' => null])
+            ->run();
+
+        $clock->advance(11); // dead lease (10) expires; 'old' inbox row is now 11s old
+
+        $this->db()->insert($inboxTable)
+            ->values(['key' => 'new', 'create_time' => $clock->now()->getTimestamp(), 'result' => null])
+            ->run();
+
+        $config = new IdempotencyConfig([
+            'storages' => [
+                'leases' => new CycleLeaseConfig(table: $leaseTable),
+                'inbox' => new CycleInboxConfig(table: $inboxTable, retentionTtl: 5),
+            ],
+        ]);
+        $gc = new CycleGarbageCollector($config, $this->manager(), $clock);
+
+        // Lease: 'dead' swept, 'live' kept. Inbox: 'old' (age 11 > 5) swept, 'new' (age 0) kept.
+        Assert::same($gc->collect(), ['leases' => 1, 'inbox' => 1]);
+    }
+
     // ----------------------------------------------------------------- helpers
+
+    /**
+     * A unique, valid table identifier for a GC test's own dedicated table (never the shared tables).
+     *
+     * @return non-empty-string
+     */
+    private function gcTable(string $prefix): string
+    {
+        return 'gc_' . $prefix . '_' . (++self::$gcSequence);
+    }
+
+    private function tableRowCount(string $table, string $key): int
+    {
+        return (int) $this->db()->select()->from($table)->where('key', $key)->count();
+    }
 
     private function inboxDriver(): CycleInboxDriver
     {

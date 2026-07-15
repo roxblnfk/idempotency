@@ -44,6 +44,10 @@ final class CycleSchema
     /**
      * Backend-neutral definition of the inbox table. None of the lease columns
      * (state/token/expire_time) are needed — atomicity comes from the transaction.
+     *
+     * `create_time` is indexed so opt-in retention GC ({@see CycleGarbageCollector}, driven by
+     * {@see CycleInboxConfig::$retentionTtl} / {@see CycleAtMostOnceConfig::$retentionTtl}) can delete
+     * aged rows index-backed rather than by full scan.
      */
     public static function inbox(): TableDefinition
     {
@@ -53,6 +57,7 @@ final class CycleSchema
                 new ColumnDefinition('result', 'text', nullable: true),
                 new ColumnDefinition('create_time', 'bigInteger'),
             ],
+            indexes: [['create_time']],
         );
     }
 

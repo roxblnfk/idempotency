@@ -34,12 +34,21 @@ final class CycleAtMostOnceConfig extends StorageConfig
      * @param non-empty-string $table dedup-guard table
      * @param bool $cacheResult store the operation result and best-effort replay it on a duplicate
      *        (default off: a duplicate gets `null`)
+     * @param int|null $retentionTtl dedup-marker retention, seconds. `null` (default) keeps markers
+     *        forever (the "at most once" guarantee never weakens; GC skips this storage). A positive
+     *        value lets {@see \Spiral\Idempotency\Driver\Cycle\CycleGarbageCollector} delete rows whose
+     *        `create_time` is older than `now - retentionTtl`.
+     *        IMPORTANT: enabling retention narrows the deduplication window — once a marker is swept, a
+     *        delayed duplicate (late redelivery/replay) is no longer recognized and RE-EXECUTES, so the
+     *        "at most once" promise only holds within the retention window. Choose a value safely longer
+     *        than the maximum expected redelivery/replay delay.
      * @param Guarantee $guarantee declared guarantee (must be backable by the at-most-once driver)
      */
     public function __construct(
         public readonly ?string $connection = null,
         public readonly string $table = 'idempotency_at_most_once',
         public readonly bool $cacheResult = false,
+        public readonly ?int $retentionTtl = null,
         public readonly Guarantee $guarantee = Guarantee::AtMostOnce,
     ) {}
 
