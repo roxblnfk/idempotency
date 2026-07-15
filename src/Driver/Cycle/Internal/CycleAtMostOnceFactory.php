@@ -26,10 +26,10 @@ use Spiral\Idempotency\StorageServices;
  *
  * @internal Resolved from {@see CycleAtMostOnceConfig::factory()} via the container; not part of the public API.
  */
-final class CycleAtMostOnceFactory implements StorageFactoryInterface
+final readonly class CycleAtMostOnceFactory implements StorageFactoryInterface
 {
     public function __construct(
-        private readonly ContainerInterface $container,
+        private ContainerInterface $container,
     ) {}
 
     public function create(StorageConfig $config, StorageServices $services): IdempotencyInterface

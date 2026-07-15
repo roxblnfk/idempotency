@@ -11,7 +11,6 @@
     ],
     "require": {
         "php": ">=8.4",
-        "cycle/transaction": "^1.1",
         "psr/clock": "^1.0",
         "psr/log": "^2.0 || ^3.0",
         "spiral/boot": "^3.15",
@@ -19,22 +18,24 @@
         "yiisoft/friendly-exception": "^1.1"
     },
     "require-dev": {
-        "testo/testo": "^0.10.20",
-        "infection/infection": "^0.33.2",
-        "vimeo/psalm": "^7",
-        "llm/skills": "dev-master",
-        "cycle/skills": "1.x-dev",
         "cycle/database": "^2.21",
         "cycle/schema-builder": "^2.12",
-        "spiral/cycle-bridge": "^2.13",
-        "spiral/interceptors": "^3.15",
-        "psr/http-message": "^1.1 || ^2.0",
-        "psr/http-factory": "^1.0",
+        "cycle/skills": "1.x-dev",
+        "cycle/transaction": "^1.1",
+        "infection/infection": "^0.33.2",
+        "llm/skills": "dev-master",
         "nyholm/psr7": "^1.8",
-        "spiral/dumper": "^3.3"
+        "psr/http-factory": "^1.0",
+        "psr/http-message": "^1.1 || ^2.0",
+        "spiral/cycle-bridge": "^2.13",
+        "spiral/dumper": "^3.3",
+        "spiral/interceptors": "^3.15",
+        "testo/testo": "^0.10.20",
+        "vimeo/psalm": "^7"
     },
     "suggest": {
         "cycle/database": "Use the bundled Cycle driver (lease/inbox storage over a Cycle DBAL connection) — required by everything under Spiral\\Idempotency\\Driver\\Cycle.",
+        "cycle/transaction": "Required by the bundled Cycle driver's inbox storage (single-transaction ExactlyOnce commit) — everything under Spiral\\Idempotency\\Driver\\Cycle.",
         "spiral/cycle-bridge": "Integrate the idempotency tables into the Cycle ORM schema (cycle:migrate / cycle:sync) via CycleSchemaBootloader — also pulls cycle/schema-builder.",
         "spiral/interceptors": "Make HTTP controller actions idempotent declaratively with the #[Idempotent] attribute via IdempotencyInterceptor (also needs a PSR-17 factory)."
     },

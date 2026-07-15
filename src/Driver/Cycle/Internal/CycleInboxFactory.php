@@ -27,10 +27,10 @@ use Spiral\Idempotency\StorageServices;
  *
  * @internal Resolved from {@see CycleInboxConfig::factory()} via the container; not part of the public API.
  */
-final class CycleInboxFactory implements StorageFactoryInterface
+final readonly class CycleInboxFactory implements StorageFactoryInterface
 {
     public function __construct(
-        private readonly ContainerInterface $container,
+        private ContainerInterface $container,
     ) {}
 
     public function create(StorageConfig $config, StorageServices $services): IdempotencyInterface

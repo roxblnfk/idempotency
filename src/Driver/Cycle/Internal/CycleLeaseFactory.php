@@ -22,10 +22,10 @@ use Spiral\Idempotency\StorageServices;
  *
  * @internal Resolved from {@see CycleLeaseConfig::factory()} via the container; not part of the public API.
  */
-final class CycleLeaseFactory implements StorageFactoryInterface
+final readonly class CycleLeaseFactory implements StorageFactoryInterface
 {
     public function __construct(
-        private readonly DatabaseProviderInterface $databases,
+        private DatabaseProviderInterface $databases,
     ) {}
 
     public function create(StorageConfig $config, StorageServices $services): IdempotencyInterface

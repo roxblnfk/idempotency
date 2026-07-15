@@ -26,15 +26,15 @@ use Spiral\Idempotency\Lease\StoredEntry;
  *
  * @internal Bound to {@see LeaseStorageInterface} per alias by the bootloader; not public API.
  */
-final class CycleLeaseStorage implements LeaseStorageInterface
+final readonly class CycleLeaseStorage implements LeaseStorageInterface
 {
     /**
      * @param non-empty-string $table
      */
     public function __construct(
-        private readonly DatabaseInterface $db,
-        private readonly ClockInterface $clock,
-        private readonly string $table = 'idempotency',
+        private DatabaseInterface $db,
+        private ClockInterface $clock,
+        private string $table = 'idempotency',
     ) {}
 
     public function acquire(string $key, string $token, int $lockTtl): bool
