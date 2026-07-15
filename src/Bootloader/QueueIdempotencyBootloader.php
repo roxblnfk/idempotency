@@ -16,38 +16,39 @@ use Spiral\Idempotency\Interceptor\IdempotencyInterceptorInterface;
 use Spiral\Idempotency\KeyResolverInterface;
 
 /**
- * Opt-in HTTP wiring for the idempotency pipeline. No request-scope bindings: the HTTP resolution
- * middleware ({@see \Spiral\Idempotency\Http\HttpKeyMiddleware},
- * {@see \Spiral\Idempotency\Http\HttpOutcomeMiddleware}) are plain autowired services listed in the
- * `transports.http` config stack; the request travels inside the call context, so nothing is
- * per-request-scoped here.
+ * Opt-in Queue wiring for the idempotency pipeline. No consumer-scope bindings: the queue resolution
+ * middleware ({@see \Spiral\Idempotency\Queue\QueueKeyMiddleware},
+ * {@see \Spiral\Idempotency\Queue\QueueRetryMiddleware}) are plain autowired services listed in the
+ * `transports.queue` config stack; the job context travels inside the call context, so nothing is
+ * per-job-scoped here.
  *
  * The interceptor is exposed under the {@see IdempotencyInterceptorInterface} alias in two layers
  * (the framework's scoped-proxy pattern, cf. `TracerInterface` / `AuthContextInterface`):
  *
- *  - the REAL {@see IdempotencyInterceptor} (flavored with `transport: 'http'`) is a singleton of the
- *    `http` DISPATCHER scope — the scope lives as long as the HTTP dispatcher itself (per-request
- *    state resets in the nested `http-request` scope), so the interceptor and its internal caches
- *    survive across requests;
- *  - the ROOT container holds only a {@see Proxy}: a domain core may be built in any scope
- *    (e.g. a classic `DomainBootloader` root singleton) — every `intercept()` call resolves the real
- *    interceptor from the ACTIVE dispatcher scope at call time. Outside such a scope the proxy fails
- *    fast with a {@see MisconfigurationException} instead of silently picking a wrong transport.
- *    A future queue integration binds its `transport: 'queue'` flavor in the `queue` scope under the
- *    same alias.
+ *  - the REAL {@see IdempotencyInterceptor} (flavored with `transport: 'queue'`) is a singleton of the
+ *    `queue` DISPATCHER scope — the scope lives as long as the queue dispatcher itself, so the
+ *    interceptor and its internal caches survive across consumed jobs;
+ *  - the ROOT container holds only a {@see Proxy}: a domain core may be built in any scope — every
+ *    `intercept()` call resolves the real interceptor from the ACTIVE dispatcher scope at call time.
+ *    Outside such a scope the proxy fails fast with a {@see MisconfigurationException} instead of
+ *    silently picking a wrong transport. The HTTP integration binds its `transport: 'http'` flavor in
+ *    the `http` scope under the same alias.
  *
- * An app adds `IdempotencyInterceptorInterface::class` to its HTTP domain core's interceptor list and
- * lists the HTTP middleware under `transports.http` in `config/idempotency.php`.
+ * An app registers the consume interceptor via `queue.php` `interceptors.consume` (or
+ * `QueueBootloader::addConsumeInterceptor(IdempotencyInterceptorInterface::class)`) and lists the queue
+ * middleware under `transports.queue` in `config/idempotency.php`. Spiral's default-on
+ * `RetryPolicyInterceptor` should sit OUTER of ours so it catches the re-thrown
+ * {@see \Spiral\Idempotency\Queue\RetryableLockException} and re-enqueues the job.
  *
- * The app MUST declare `transports.http` — at least as an empty list. A missing section is treated as a
- * misconfiguration: {@see IdempotencyConfig::getTransport()} throws
- * {@see MisconfigurationException} on the first `#[Idempotent]` call rather
- * than running an empty pipeline that silently disables idempotency. An explicit `'http' => []` is valid
- * (key comes only from the attribute, no HTTP middleware).
+ * The app MUST declare `transports.queue` — at least as an empty list. A missing section is treated as a
+ * misconfiguration: {@see IdempotencyConfig::getTransport()} throws {@see MisconfigurationException} on
+ * the first `#[Idempotent]` call rather than running an empty pipeline that silently disables
+ * idempotency. An explicit `'queue' => []` is valid (key comes only from the attribute, no queue
+ * middleware).
  *
  * @api
  */
-final class HttpIdempotencyBootloader extends Bootloader
+final class QueueIdempotencyBootloader extends Bootloader
 {
     public function defineDependencies(): array
     {
@@ -60,9 +61,9 @@ final class HttpIdempotencyBootloader extends Bootloader
             // Root: a scoped proxy only. Each intercept() forwards to the flavor bound in the active
             // dispatcher scope; the fallback fires when no scope on the chain bound the alias.
             //
-            // NOTE: QueueIdempotencyBootloader binds this SAME alias to an identical Proxy in root — the
+            // NOTE: HttpIdempotencyBootloader binds this SAME alias to an identical Proxy in root — the
             // double binding is intentional and harmless (Spiral merges bindings; last wins; both bind
-            // the same Proxy), so a queue-only app works without this HTTP bootloader.
+            // the same Proxy), so an app running either transport works without the other bootloader.
             IdempotencyInterceptorInterface::class => new Proxy(
                 IdempotencyInterceptorInterface::class,
                 false,
@@ -79,9 +80,9 @@ final class HttpIdempotencyBootloader extends Bootloader
 
     public function init(BinderInterface $binder): void
     {
-        // The `http` dispatcher scope, not root and not `http-request`: dispatcher-lifetime singleton,
-        // and the alias stays free for other transports' scopes.
-        $binder->getBinder('http')->bindSingleton(
+        // The `queue` dispatcher scope, not root: dispatcher-lifetime singleton, and the alias stays
+        // free for other transports' scopes.
+        $binder->getBinder('queue')->bindSingleton(
             IdempotencyInterceptorInterface::class,
             static fn(
                 IdempotencyRegistry $registry,
@@ -93,7 +94,7 @@ final class HttpIdempotencyBootloader extends Bootloader
                 $keys,
                 $container,
                 $config,
-                transport: 'http',
+                transport: 'queue',
             ),
         );
     }

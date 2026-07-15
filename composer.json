@@ -30,6 +30,7 @@
         "spiral/cycle-bridge": "^2.13",
         "spiral/dumper": "^3.3",
         "spiral/interceptors": "^3.15",
+        "spiral/queue": "^3.15",
         "testo/testo": "^0.10.20",
         "vimeo/psalm": "^7"
     },
@@ -37,7 +38,8 @@
         "cycle/database": "Use the bundled Cycle driver (lease/inbox storage over a Cycle DBAL connection) — required by everything under Spiral\\Idempotency\\Driver\\Cycle.",
         "cycle/transaction": "Required by the bundled Cycle driver's inbox storage (single-transaction ExactlyOnce commit) — everything under Spiral\\Idempotency\\Driver\\Cycle.",
         "spiral/cycle-bridge": "Integrate the idempotency tables into the Cycle ORM schema (cycle:migrate / cycle:sync) via CycleSchemaBootloader — also pulls cycle/schema-builder.",
-        "spiral/interceptors": "Make HTTP controller actions idempotent declaratively with the #[Idempotent] attribute via IdempotencyInterceptor (also needs a PSR-17 factory)."
+        "spiral/interceptors": "Make HTTP controller actions idempotent declaratively with the #[Idempotent] attribute via IdempotencyInterceptor (also needs a PSR-17 factory).",
+        "spiral/queue": "Make queue/job handlers idempotent declaratively with #[Idempotent] via IdempotencyInterceptor bound in the 'queue' scope by QueueIdempotencyBootloader (Locked -> native job retry)."
     },
     "autoload": {
         "psr-4": {

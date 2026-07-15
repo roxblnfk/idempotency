@@ -1,0 +1,138 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Spiral\Idempotency\Tests\Unit\Queue;
+
+use Spiral\Idempotency\Exception\MissingKeyException;
+use Spiral\Idempotency\ExecuteOptions;
+use Spiral\Idempotency\Internal\Key\KeyResolver;
+use Spiral\Idempotency\Pipeline\IdempotencyCall;
+use Spiral\Idempotency\Queue\QueueKeyMiddleware;
+use Spiral\Interceptors\Context\CallContext;
+use Spiral\Interceptors\Context\Target;
+use Testo\Assert;
+use Testo\Codecov\Covers;
+use Testo\Expect;
+use Testo\Test;
+
+final class JobFixture
+{
+    public function consume(): void
+    {
+        throw new \LogicException('Not invoked directly.');
+    }
+}
+
+#[Test]
+#[Covers(QueueKeyMiddleware::class)]
+final class QueueKeyMiddlewareTest
+{
+    /**
+     * @param array<string, list<string>> $headers
+     */
+    private function jobContext(array $headers = []): CallContext
+    {
+        $target = Target::fromReflectionMethod(
+            new \ReflectionMethod(JobFixture::class, 'consume'),
+            new JobFixture(),
+        );
+
+        // Consume-side headers travel as a call ARGUMENT ('headers'), matching Spiral's queue Handler.
+        return new CallContext($target, ['headers' => $headers]);
+    }
+
+    private function call(mixed $context, ?string $key = null, ?string $keyScope = null): IdempotencyCall
+    {
+        return new IdempotencyCall(
+            context: $context,
+            operation: static fn(): mixed => null,
+            options: new ExecuteOptions(),
+            key: $key,
+            keyScope: $keyScope,
+        );
+    }
+
+    public function passesThroughWhenKeyAlreadyResolved(): void
+    {
+        $middleware = new QueueKeyMiddleware(new KeyResolver());
+        $call = $this->call($this->jobContext(['Idempotency-Key' => ['job-1']]), key: 'existing');
+
+        $received = null;
+        $middleware->process($call, static function (IdempotencyCall $call) use (&$received): mixed {
+            $received = $call;
+            return null;
+        });
+
+        Assert::notNull($received);
+        Assert::same($received->key, 'existing');
+    }
+
+    public function passesThroughWhenContextNotAttributed(): void
+    {
+        $middleware = new QueueKeyMiddleware(new KeyResolver());
+        $call = $this->call('not-a-context');
+
+        $received = null;
+        $middleware->process($call, static function (IdempotencyCall $call) use (&$received): mixed {
+            $received = $call;
+            return null;
+        });
+
+        Assert::notNull($received);
+        Assert::same($received->key, null);
+    }
+
+    public function extractsKeyFromJobHeader(): void
+    {
+        $middleware = new QueueKeyMiddleware(new KeyResolver());
+        $call = $this->call(
+            $this->jobContext(['Idempotency-Key' => ['job-1']]),
+            keyScope: 'Op::run',
+        );
+
+        $received = null;
+        $middleware->process($call, static function (IdempotencyCall $call) use (&$received): mixed {
+            $received = $call;
+            return null;
+        });
+
+        Assert::notNull($received);
+        Assert::same($received->key, (new KeyResolver())->resolve('job-1', 'Op::run'));
+    }
+
+    public function customHeaderName(): void
+    {
+        $middleware = new QueueKeyMiddleware(new KeyResolver(), 'X-Dedup');
+        $call = $this->call($this->jobContext(['X-Dedup' => ['abc']]));
+
+        $received = null;
+        $middleware->process($call, static function (IdempotencyCall $call) use (&$received): mixed {
+            $received = $call;
+            return null;
+        });
+
+        Assert::notNull($received);
+        Assert::same($received->key, (new KeyResolver())->resolve('abc', null));
+    }
+
+    public function missingHeaderThrowsMissingKey(): void
+    {
+        $middleware = new QueueKeyMiddleware(new KeyResolver());
+        $call = $this->call($this->jobContext([]));
+
+        Expect::exception(MissingKeyException::class);
+
+        $middleware->process($call, static fn(IdempotencyCall $call): mixed => null);
+    }
+
+    public function blankHeaderThrowsMissingKey(): void
+    {
+        $middleware = new QueueKeyMiddleware(new KeyResolver());
+        $call = $this->call($this->jobContext(['Idempotency-Key' => ['']]));
+
+        Expect::exception(MissingKeyException::class);
+
+        $middleware->process($call, static fn(IdempotencyCall $call): mixed => null);
+    }
+}

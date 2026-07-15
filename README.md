@@ -21,6 +21,8 @@ Optional packages:
 - `cycle/database` — the bundled storage driver (lease and inbox tables over a Cycle DBAL connection);
 - `spiral/interceptors` — the declarative `#[Idempotent]` attribute via `IdempotencyInterceptor`
   (also needs a PSR-17 factory for the HTTP middleware);
+- `spiral/queue` — the queue/jobs transport (`QueueIdempotencyBootloader`, `QueueKeyMiddleware`,
+  `QueueRetryMiddleware`), making consumed jobs idempotent with `Locked → native job retry`;
 - `spiral/cycle-bridge` — integrates the idempotency tables into the ORM schema
   (`cycle:sync` / `cycle:migrate`).
 
@@ -137,8 +139,9 @@ migration with `cycle:migrate`).
 > Reference the `IdempotencyInterceptorInterface` **alias**, with no scope. The `DomainBootloader`
 > interceptor list is resolved in the root container, where the alias is a forwarding proxy: on every
 > call it resolves the real, transport-flavored interceptor from the active dispatcher scope (the
-> `http` scope, where `HttpIdempotencyBootloader` bound it). So the same domain core works in any
-> scope, and a future queue integration reuses the same alias. Referencing the concrete
+> `http` scope, where `HttpIdempotencyBootloader` bound it; the `queue` scope for
+> `QueueIdempotencyBootloader`). So the same domain core works in any scope, and every transport
+> reuses the same alias. Referencing the concrete
 > `IdempotencyInterceptor` class instead would fail — it is deliberately unbound in root. Invoking the
 > proxy outside a transport scope fails fast with a friendly `MisconfigurationException`.
 
@@ -160,6 +163,68 @@ curl -X POST /payments/charge -H 'Idempotency-Key: pay-42' -d 'amount=500'
 
 By default `HttpKeyMiddleware` reads the `Idempotency-Key` header, then the `key` body/query field
 (both names are constructor-configurable).
+
+### Queue / Jobs behaviour
+
+The same interceptor makes **queue/job handlers** idempotent — a broker delivers at-least-once, so a
+redelivered job must not double-run its side-effect. Register the queue bootloader and list the queue
+middleware under `transports.queue`:
+
+```php
+// Kernel::defineBootloaders()
+\Spiral\Idempotency\Bootloader\QueueIdempotencyBootloader::class,
+```
+
+```php
+// app/config/idempotency.php
+use Spiral\Idempotency\Queue\QueueKeyMiddleware;
+use Spiral\Idempotency\Queue\QueueRetryMiddleware;
+
+'transports' => [
+    'queue' => [
+        QueueRetryMiddleware::class, // outer: maps failure modes back to the transport
+        QueueKeyMiddleware::class,   // inner: extracts the key from the job header
+    ],
+],
+```
+
+Register the interceptor on the **consume** side (same alias, no concrete class) — either in
+`app/config/queue.php` under `interceptors.consume`, or via the bootloader:
+
+```php
+use Spiral\Idempotency\Interceptor\IdempotencyInterceptorInterface;
+
+$queue->addConsumeInterceptor(IdempotencyInterceptorInterface::class);
+```
+
+> [!IMPORTANT]
+> Keep Spiral's default `RetryPolicyInterceptor` **outer** of the idempotency interceptor in the
+> `consume` list: `QueueRetryMiddleware` re-throws a `Locked` collision as a `RetryableLockException`,
+> and it is `RetryPolicyInterceptor` that catches it and re-enqueues the job with the carried delay.
+> We reuse the framework's retry engine rather than reimplementing backoff.
+
+Mark a job handler — the key comes from the **payload** via the attribute's `key` path, or from a
+job **header** the producer set (`Options::withHeader('Idempotency-Key', ...)`):
+
+```php
+#[Idempotent(storage: 'orders', key: 'orderId')] // dot-path over the job payload
+public function invoke(string $orderId, array $payload): void
+{
+    // runs once per orderId; a redelivered job replays / is skipped
+}
+```
+
+| Situation | Outcome |
+|---|---|
+| First delivery | The handler runs; the guarantee records the effect (inbox commit / lease + cache) |
+| Redelivery after completion | Deduplicated — the handler does **not** re-run (ExactlyOnce/AtLeastOnce), the job is ACKed |
+| Delivery while another worker holds the key | `LockedException` → `RetryableLockException` → the job is re-enqueued after the lock TTL (not dead-lettered) |
+| No key resolvable (bad payload/header) | `MissingKeyException` propagates — **not** retryable, so the job dead-letters instead of retrying forever |
+| `AtMostOnce` (dedup-guard) duplicate | The handler returns `null` → the job is ACKed (fire-once); this is the natural home for `AtMostOnce` |
+
+For transient **failure** retries (infra errors), compose Spiral's own `#[RetryPolicy]` attribute on
+the handler alongside `#[Idempotent]` — the two are orthogonal: idempotency dedups the effect, the
+retry policy governs re-delivery.
 
 ### The `#[Idempotent]` attribute
 
