@@ -1,0 +1,100 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Spiral\Idempotency\Bootloader;
+
+use Psr\Container\ContainerInterface;
+use Spiral\Boot\Bootloader\Bootloader;
+use Spiral\Core\BinderInterface;
+use Spiral\Core\Config\Proxy;
+use Spiral\Idempotency\Config\IdempotencyConfig;
+use Spiral\Idempotency\Exception\MisconfigurationException;
+use Spiral\Idempotency\IdempotencyRegistry;
+use Spiral\Idempotency\Interceptor\IdempotencyInterceptor;
+use Spiral\Idempotency\Interceptor\IdempotencyInterceptorInterface;
+use Spiral\Idempotency\KeyResolverInterface;
+
+/**
+ * Opt-in gRPC wiring for the idempotency pipeline. No per-call-scope bindings: the gRPC resolution
+ * middleware ({@see \Spiral\Idempotency\Grpc\GrpcKeyMiddleware},
+ * {@see \Spiral\Idempotency\Grpc\GrpcOutcomeMiddleware}) are plain autowired services listed in the
+ * `transports.grpc` config stack; the gRPC context travels inside the call context, so nothing is
+ * per-call-scoped here.
+ *
+ * The interceptor is exposed under the {@see IdempotencyInterceptorInterface} alias in two layers
+ * (the framework's scoped-proxy pattern, cf. `TracerInterface` / `AuthContextInterface`):
+ *
+ *  - the REAL {@see IdempotencyInterceptor} (flavored with `transport: 'grpc'`) is a singleton of the
+ *    `grpc` DISPATCHER scope — the scope lives as long as the gRPC dispatcher itself, so the interceptor
+ *    and its internal caches survive across gRPC calls;
+ *  - the ROOT container holds only a {@see Proxy}: a domain core may be built in any scope — every
+ *    `intercept()` call resolves the real interceptor from the ACTIVE dispatcher scope at call time.
+ *    Outside such a scope the proxy fails fast with a {@see MisconfigurationException} instead of
+ *    silently picking a wrong transport. The HTTP/Queue integrations bind their `transport: 'http'` /
+ *    `transport: 'queue'` flavors in their own scopes under the same alias.
+ *
+ * An app registers the gRPC server interceptor via `config/grpc.php` `interceptors` (or
+ * `GRPCBootloader::addInterceptor(IdempotencyInterceptorInterface::class)`) and lists the gRPC middleware
+ * under `transports.grpc` in `config/idempotency.php`.
+ *
+ * The app MUST declare `transports.grpc` — at least as an empty list. A missing section is treated as a
+ * misconfiguration: {@see IdempotencyConfig::getTransport()} throws {@see MisconfigurationException} on
+ * the first `#[Idempotent]` call rather than running an empty pipeline that silently disables
+ * idempotency. An explicit `'grpc' => []` is valid (key comes only from the attribute, no gRPC middleware).
+ *
+ * @api
+ */
+final class GrpcIdempotencyBootloader extends Bootloader
+{
+    public function defineDependencies(): array
+    {
+        return [IdempotencyBootloader::class];
+    }
+
+    public function defineBindings(): array
+    {
+        return [
+            // Root: a scoped proxy only. Each intercept() forwards to the flavor bound in the active
+            // dispatcher scope; the fallback fires when no scope on the chain bound the alias.
+            //
+            // NOTE: HttpIdempotencyBootloader / QueueIdempotencyBootloader bind this SAME alias to an
+            // identical Proxy in root — the double binding is intentional and harmless (Spiral merges
+            // bindings; last wins; all bind the same Proxy), so an app running any subset of the
+            // transports works without the others' bootloaders.
+            IdempotencyInterceptorInterface::class => new Proxy(
+                IdempotencyInterceptorInterface::class,
+                false,
+                static fn(): never => throw new MisconfigurationException(
+                    'IdempotencyInterceptorInterface is used outside of a transport dispatcher scope.',
+                    'The real interceptor is bound per transport: HttpIdempotencyBootloader binds the '
+                    . 'http flavor inside the `http` scope, QueueIdempotencyBootloader binds the queue '
+                    . 'flavor inside the `queue` scope, GrpcIdempotencyBootloader binds the grpc flavor '
+                    . 'inside the `grpc` scope. Invoke the interceptor while a transport scope is active, '
+                    . 'or register the integration bootloader for this transport.',
+                ),
+            ),
+        ];
+    }
+
+    public function init(BinderInterface $binder): void
+    {
+        // The `grpc` dispatcher scope, not root: dispatcher-lifetime singleton, and the alias stays
+        // free for other transports' scopes.
+        $binder->getBinder('grpc')->bindSingleton(
+            IdempotencyInterceptorInterface::class,
+            static fn(
+                IdempotencyRegistry $registry,
+                KeyResolverInterface $keys,
+                ContainerInterface $container,
+                IdempotencyConfig $config,
+            ): IdempotencyInterceptor => new IdempotencyInterceptor(
+                $registry,
+                $keys,
+                $container,
+                $config,
+                transport: 'grpc',
+            ),
+        );
+    }
+}
