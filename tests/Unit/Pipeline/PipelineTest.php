@@ -139,6 +139,8 @@ final class PipelineTest
             {
                 return 'k';
             }
+
+            public function renew(bool $force = false): void {}
         };
     }
 }

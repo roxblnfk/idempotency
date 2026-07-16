@@ -118,6 +118,8 @@ final class ClassifierMiddlewareTest
                 {
                     return 'k';
                 }
+
+                public function renew(bool $force = false): void {}
             },
             operation: static fn(): null => null,
             options: new ExecuteOptions(),

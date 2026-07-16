@@ -27,6 +27,10 @@ final class CycleLeaseConfig extends StorageConfig
      * @param int<1, max> $lockTtl PROCESSING lock TTL, seconds
      * @param int<1, max> $retentionTtl COMPLETED retention TTL, seconds
      * @param Guarantee $guarantee declared guarantee (must be backable by the lease driver)
+     * @param float $heartbeatThreshold fraction of lockTtl an unforced heartbeat waits before it renews
+     *        again (0..1). Throttles {@see \Spiral\Idempotency\IdempotencyContext::renew()} so a
+     *        long-running operation keeps its lock alive without hammering the storage. Default 0.5 =
+     *        renew at most once per half the lockTtl.
      */
     public function __construct(
         public readonly ?string $connection = null,
@@ -34,6 +38,7 @@ final class CycleLeaseConfig extends StorageConfig
         public readonly int $lockTtl = 30,
         public readonly int $retentionTtl = 86400,
         public readonly Guarantee $guarantee = Guarantee::AtLeastOnce,
+        public readonly float $heartbeatThreshold = 0.5,
     ) {}
 
     public function guarantee(): Guarantee

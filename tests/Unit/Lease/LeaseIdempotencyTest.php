@@ -107,6 +107,56 @@ final class LeaseIdempotencyTest
         Assert::same($calls, 1);
     }
 
+    public function forcedHeartbeatReachesTheLeaseManager(): void
+    {
+        // Proves the context -> HeartbeatThrottle -> LeaseManager wiring: a forced renew() call from the
+        // operation bypasses the throttle and reaches LeaseManagerInterface::renew() on the real manager.
+        $clock = new MutableClock();
+        $inner = new LeaseManager(new InMemoryLeaseStorage($clock), $clock);
+        $spy = new class($inner) implements LeaseManagerInterface {
+            public int $renewCalls = 0;
+
+            public function __construct(private readonly LeaseManagerInterface $inner) {}
+
+            public function acquire(string $key, int $lockTtl): AcquireResult
+            {
+                return $this->inner->acquire($key, $lockTtl);
+            }
+
+            public function complete(string $key, string $token, bool $success, mixed $result, int $retentionTtl): void
+            {
+                $this->inner->complete($key, $token, $success, $result, $retentionTtl);
+            }
+
+            public function abort(string $key, string $token): void
+            {
+                $this->inner->abort($key, $token);
+            }
+
+            public function error(string $key, string $token): void
+            {
+                $this->inner->error($key, $token);
+            }
+
+            public function renew(string $key, string $token, int $lockTtl): void
+            {
+                $this->renewCalls++;
+                $this->inner->renew($key, $token, $lockTtl);
+            }
+        };
+
+        $driver = new LeaseIdempotency($spy, new Pipeline(), lockTtl: 30, retentionTtl: 3600, clock: $clock);
+
+        $result = $driver->execute('k', static function (IdempotencyContext $c): string {
+            $c->renew(true);
+            $c->renew(true);
+            return 'ok';
+        });
+
+        Assert::same($spy->renewCalls, 2);
+        Assert::same($result, 'ok');
+    }
+
     public function domainFailureIsCachedAndRethrownOnReplay(): never
     {
         $driver = $this->driver();

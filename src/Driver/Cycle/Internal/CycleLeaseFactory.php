@@ -12,6 +12,7 @@ use Spiral\Idempotency\IdempotencyInterface;
 use Spiral\Idempotency\Internal\Lease\LeaseIdempotency;
 use Spiral\Idempotency\Internal\Lease\LeaseManager;
 use Spiral\Idempotency\Pipeline\Middleware\ClassifierMiddleware;
+use Spiral\Idempotency\Pipeline\Middleware\FiberRenewalMiddleware;
 use Spiral\Idempotency\Pipeline\Pipeline;
 use Spiral\Idempotency\StorageFactoryInterface;
 use Spiral\Idempotency\StorageServices;
@@ -40,8 +41,13 @@ final readonly class CycleLeaseFactory implements StorageFactoryInterface
 
         $database = $this->databases->database($config->connection);
 
+        // FiberRenewalMiddleware is innermost (wraps the operation) so it catches the operation's
+        // Fiber::suspend() checkpoints and fires a heartbeat; ClassifierMiddleware stays outside it.
         /** @var Pipeline<\Spiral\Idempotency\Pipeline\ExecutionCall> $execution */
-        $execution = new Pipeline(new ClassifierMiddleware($services->classifier));
+        $execution = new Pipeline(
+            new ClassifierMiddleware($services->classifier),
+            new FiberRenewalMiddleware(),
+        );
 
         return new LeaseIdempotency(
             new LeaseManager(
@@ -55,6 +61,8 @@ final readonly class CycleLeaseFactory implements StorageFactoryInterface
             $services->serializer,
             $services->classifier,
             logger: $services->logger,
+            clock: $services->clock,
+            heartbeatThreshold: $config->heartbeatThreshold,
         );
     }
 }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Spiral\Idempotency\Internal\Lease;
 
+use Psr\Clock\ClockInterface;
 use Psr\Log\LoggerInterface;
 use Spiral\Idempotency\Exception\CachedDomainFailureException;
 use Spiral\Idempotency\Exception\ClassifiedException;
@@ -15,6 +16,7 @@ use Spiral\Idempotency\Guarantee;
 use Spiral\Idempotency\GuaranteeProviderInterface;
 use Spiral\Idempotency\IdempotencyInterface;
 use Spiral\Idempotency\Internal\Pipeline\DefaultFailureClassifier;
+use Spiral\Idempotency\Internal\SystemClock;
 use Spiral\Idempotency\Lease\Acquired;
 use Spiral\Idempotency\Lease\AlreadyCompleted;
 use Spiral\Idempotency\Lease\LeaseManagerInterface;
@@ -54,12 +56,15 @@ final readonly class LeaseIdempotency implements IdempotencyInterface, Guarantee
 {
     private SerializerInterface $serializer;
     private FailureClassifierInterface $classifier;
+    private ClockInterface $clock;
 
     /**
-     * @param Pipeline<ExecutionCall> $execution wraps the operation (classify / retry / ...)
+     * @param Pipeline<ExecutionCall> $execution wraps the operation (classify / retry / renewal / ...)
      * @param int<1, max> $lockTtl PROCESSING lock TTL, seconds (short)
      * @param int<1, max> $retentionTtl COMPLETED retention TTL, seconds (long)
      * @param positive-int $acquireRetryLimit bound on AcquireRetry loops
+     * @param float $heartbeatThreshold fraction of lockTtl an unforced heartbeat waits before it renews
+     *        again — throttles {@see \Spiral\Idempotency\IdempotencyContext::renew()} (see {@see HeartbeatThrottle})
      */
     public function __construct(
         private LeaseManagerInterface $manager,
@@ -70,9 +75,12 @@ final readonly class LeaseIdempotency implements IdempotencyInterface, Guarantee
         ?FailureClassifierInterface $classifier = null,
         private int $acquireRetryLimit = 3,
         private ?LoggerInterface $logger = null,
+        ?ClockInterface $clock = null,
+        private float $heartbeatThreshold = 0.5,
     ) {
         $this->serializer = $serializer ?? new PhpSerializer();
         $this->classifier = $classifier ?? new DefaultFailureClassifier();
+        $this->clock = $clock ?? new SystemClock();
     }
 
     public function guarantee(): Guarantee
@@ -93,7 +101,7 @@ final readonly class LeaseIdempotency implements IdempotencyInterface, Guarantee
             $result = $this->manager->acquire($key, $lockTtl);
 
             if ($result instanceof Acquired) {
-                return $this->run($result, $operation, $options, $retentionTtl);
+                return $this->run($result, $operation, $options, $retentionTtl, $lockTtl);
             }
 
             if ($result instanceof AlreadyCompleted) {
@@ -116,10 +124,30 @@ final readonly class LeaseIdempotency implements IdempotencyInterface, Guarantee
 
     /**
      * @param int<1, max> $retentionTtl
+     * @param int<1, max> $lockTtl
      */
-    private function run(Acquired $lease, \Closure $operation, ExecuteOptions $options, int $retentionTtl): mixed
-    {
-        $call = new ExecutionCall(new LeaseContext($lease->key), $operation, $options);
+    private function run(
+        Acquired $lease,
+        \Closure $operation,
+        ExecuteOptions $options,
+        int $retentionTtl,
+        int $lockTtl,
+    ): mixed {
+        // Per-execution heartbeat: keeps this PROCESSING lock alive when the operation renews at safe
+        // points (directly via renew(), or via Fiber::suspend() under FiberRenewalMiddleware). Throttled
+        // so unforced beats cannot hammer the storage.
+        $throttle = new HeartbeatThrottle(
+            $this->clock,
+            function () use ($lease, $lockTtl): void {
+                $this->manager->renew($lease->key, $lease->token, $lockTtl);
+            },
+            $lockTtl,
+            $this->heartbeatThreshold,
+            $lease->key,
+            $this->logger,
+        );
+
+        $call = new ExecutionCall(new LeaseContext($lease->key, $throttle(...)), $operation, $options);
 
         try {
             $value = $this->execution->process(
