@@ -228,6 +228,50 @@ For transient **failure** retries (infra errors), compose Spiral's own `#[RetryP
 the handler alongside `#[Idempotent]` — the two are orthogonal: idempotency dedups the effect, the
 retry policy governs re-delivery.
 
+### gRPC behaviour
+
+The same interceptor makes **gRPC service methods** idempotent. Register the gRPC bootloader, list the
+gRPC middleware under `transports.grpc`, and add the interceptor to `config/grpc.php`:
+
+```php
+// Kernel::defineBootloaders()
+\Spiral\Idempotency\Bootloader\GrpcIdempotencyBootloader::class,
+```
+
+```php
+// app/config/idempotency.php
+use Spiral\Idempotency\Grpc\GrpcKeyMiddleware;
+use Spiral\Idempotency\Grpc\GrpcOutcomeMiddleware;
+
+'transports' => [
+    'grpc' => [
+        GrpcOutcomeMiddleware::class, // outer: response/status snapshot, Locked → ABORTED
+        GrpcKeyMiddleware::class,     // inner: key from the `idempotency-key` metadata entry
+    ],
+],
+```
+
+The client sends the key as metadata; the server-side key middleware reads `idempotency-key`
+(case-insensitively, configurable).
+
+| Situation | Outcome |
+|---|---|
+| First call | The method runs; the protobuf response message is snapshotted |
+| Retry after completion | The cached message is rebuilt and returned; the method does **not** run |
+| Retry while the first call is in flight | `ABORTED` — the status gRPC recommends for "retry at a higher level" (the analog of HTTP `409`) |
+| No key in the metadata | `INVALID_ARGUMENT` (the analog of HTTP `400`) |
+| The method threw a `GRPCException` | The **status** is snapshotted (code + message + details) and replayed identically, exact subclass included |
+| ... with a transient status (`UNAVAILABLE`, `DEADLINE_EXCEEDED`, `INTERNAL`, ...) | Not cached: the key is released and a retry re-runs (configurable predicate of `GrpcOutcomeMiddleware`) |
+
+Unlike HTTP, no configuration is needed to keep a **failure** replay faithful: over gRPC a negative
+outcome *is* a status, and `code` + `message` + `details` is a complete, deterministic snapshot of what
+the client sees. Bind a `DomainFailureMapperInterface` only if the service throws plain domain
+exceptions instead of `GRPCException` — that mapping otherwise happens above the interceptor, too late
+to be cached, and the replay would answer with a different status.
+
+Infrastructure and Bug failures (including a `GRPCException` marked `RetryableInterface`) are never
+snapshotted: they stay exceptions so the key is released and a retry re-runs.
+
 ### The `#[Idempotent]` attribute
 
 ```php

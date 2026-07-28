@@ -38,6 +38,11 @@ use Spiral\Idempotency\KeyResolverInterface;
  * `GRPCBootloader::addInterceptor(IdempotencyInterceptorInterface::class)`) and lists the gRPC middleware
  * under `transports.grpc` in `config/idempotency.php`.
  *
+ * A thrown {@see \Spiral\RoadRunner\GRPC\Exception\GRPCException} is snapshotted and replayed as the same
+ * status out of the box — nothing to bind. Optional: bind
+ * {@see \Spiral\Idempotency\Grpc\DomainFailureMapperInterface} when the service expresses negative outcomes
+ * as plain domain exceptions instead of gRPC statuses; see {@see \Spiral\Idempotency\Grpc\GrpcOutcomeMiddleware}.
+ *
  * The app MUST declare `transports.grpc` — at least as an empty list. A missing section is treated as a
  * misconfiguration: {@see IdempotencyConfig::getTransport()} throws {@see MisconfigurationException} on
  * the first `#[Idempotent]` call rather than running an empty pipeline that silently disables
