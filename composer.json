@@ -34,6 +34,7 @@
         "spiral/dumper": "^3.3",
         "spiral/interceptors": "^3.15",
         "spiral/queue": "^3.15",
+        "spiral/roadrunner-bridge": "^4.0",
         "spiral/roadrunner-grpc": "^3.6",
         "testo/testo": "^0.10.20",
         "vimeo/psalm": "^7"
@@ -45,7 +46,8 @@
         "predis/predis": "Use the Redis/Valkey lease backend (RedisLeaseConfig) — AtLeastOnce storage over a Redis-compatible server.",
         "spiral/interceptors": "Make HTTP controller actions idempotent declaratively with the #[Idempotent] attribute via IdempotencyInterceptor (also needs a PSR-17 factory).",
         "spiral/queue": "Make queue/job handlers idempotent declaratively with #[Idempotent] via IdempotencyInterceptor bound in the 'queue' scope by QueueIdempotencyBootloader (Locked -> native job retry).",
-        "spiral/roadrunner-grpc": "Make gRPC service methods idempotent declaratively with #[Idempotent] via IdempotencyInterceptor bound in the 'grpc' scope by GrpcIdempotencyBootloader (Locked -> ABORTED status with a google.rpc.RetryInfo detail, key from metadata). Pulls google/protobuf + google/common-protos, which the gRPC middleware use directly."
+        "spiral/roadrunner-grpc": "Make gRPC service methods idempotent declaratively with #[Idempotent] via IdempotencyInterceptor bound in the 'grpc' scope by GrpcIdempotencyBootloader (Locked -> ABORTED status with a google.rpc.RetryInfo detail, key from metadata). Pulls google/protobuf + google/common-protos, which the gRPC middleware use directly.",
+        "spiral/roadrunner-bridge": "Runs the gRPC (and queue) dispatcher in a Spiral app: provides config/grpc.php with its `interceptors` list, the 'grpc' dispatcher scope and the invoker that IdempotencyInterceptorInterface plugs into. Required to actually serve gRPC; no type of it is imported here."
     },
     "autoload": {
         "psr-4": {

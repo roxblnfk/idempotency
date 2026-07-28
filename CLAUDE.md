@@ -7,7 +7,18 @@ Cycle is an *optional* driver — core (`src/` outside `Driver/Cycle`) must carr
 Transports are optional too: their packages are `require-dev` + `suggest`, and their types stay
 confined to the transport adapter dir. HTTP (`src/Http`, `psr/http-message`) and Queue (`src/Queue`,
 `spiral/queue`) each bind a `transport:`-flavored `IdempotencyInterceptor` in their dispatcher scope
-(`http` / `queue`) under the shared `IdempotencyInterceptorInterface` alias. Queue: `spiral/queue`
+(`http` / `queue`) under the shared `IdempotencyInterceptorInterface` alias.
+
+gRPC (`src/Grpc`) imports only `spiral/roadrunner-grpc` (+ `google/protobuf`, `google/common-protos`)
+types, but the integration it plugs into is `spiral/roadrunner-bridge` — a **behavioural** dependency
+with no imported type: its `GRPC\Internal\Invoker` builds
+`CallContext(Target::fromPair($service, $method->name), [$grpcContext, $message])` (hence the key
+middleware reading `getArguments()[0]`, and `#[Idempotent]` being discoverable at all — `fromPair()`
+with a service *instance* yields a real `ReflectionMethod`), its result MUST be a protobuf `Message`
+(hence materializing an empty response for a `null` outcome), and its dispatcher scope is `grpc`.
+The bridge is `require-dev` **for tests only**: `tests/Unit/Grpc/BridgeIntegrationTest.php` drives the
+real `Invoker` so a change in any of those assumptions fails a test instead of silently disabling
+idempotency in production. Queue: `spiral/queue`
 types appear ONLY in `src/Queue/RetryableLockException` (adapts `Locked` → the native
 `RetryableExceptionInterface` so `RetryPolicyInterceptor` re-enqueues); the key/retry middleware use
 only `spiral/interceptors`. We do NOT reimplement retry/backoff — Spiral's engine owns it.
