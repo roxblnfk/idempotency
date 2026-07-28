@@ -340,9 +340,43 @@ final class PaymentDeclined extends \DomainException implements ReplayableFailur
 }
 ```
 
-> [!NOTE]
-> Over HTTP, prefer returning an error **response** for negative domain outcomes — responses are
-> snapshotted and replayed byte-identically, including the status code.
+#### Consistent HTTP status for a thrown domain failure
+
+> [!WARNING]
+> A *thrown* domain failure bypasses the response snapshot, so the two attempts are rendered by
+> different code: the first by your exception handler, the replay from the cached snapshot. Over HTTP
+> that means a **different status code** — unless you do one of the three things below.
+
+Three ways to keep the replay identical to the first attempt, best first:
+
+1. **Return an error response** instead of throwing — it is snapshotted and replayed byte-identically,
+   status included. Nothing to configure.
+2. **Bind a `DomainFailureRendererInterface`** — keeps the throwing style: `HttpOutcomeMiddleware`
+   renders Domain-classified throwables into a response *inside* the operation, so the outcome is
+   cached as a response snapshot and the replay carries the same status **and** the
+   `Idempotency-Replay` header:
+
+   ```php
+   final class DeclineRenderer implements DomainFailureRendererInterface
+   {
+       public function __construct(private ResponseFactoryInterface $responses) {}
+
+       public function render(\Throwable $failure): ?ResponseInterface
+       {
+           // Return null for failures this renderer does not own — they are rethrown untouched.
+           return $failure instanceof PaymentDeclined
+               ? $this->responses->createResponse(402)
+               : null;
+       }
+   }
+   ```
+
+   Bind it in a bootloader (`DomainFailureRendererInterface::class => DeclineRenderer::class`) — the
+   middleware picks it up by autowiring. Only `FailureKind::Domain` failures reach the renderer:
+   Infrastructure and Bug ones stay exceptions, so the key is still released and a retry re-runs. The
+   `cacheable` predicate still applies, so a rendered 5xx is not cached either. Rows written *before*
+   the renderer was bound keep replaying as a throw.
+3. **Map `CachedDomainFailureException::$originalClass`** in the application exception handler.
 
 ### Customization
 
@@ -352,6 +386,8 @@ final class PaymentDeclined extends \DomainException implements ReplayableFailur
 - **Serializer** — cached results are serialized with `spiral/serializer` (`PhpSerializer` by
   default); bind your own `SerializerInterface` to switch, e.g. to JSON.
 - **Classifier** — bind `FailureClassifierInterface` to replace the default failure mapping.
+- **Domain failure rendering** — bind `DomainFailureRendererInterface` to turn thrown domain failures
+  into cached HTTP responses, so a replay reproduces the same status (see above).
 - **Key policy** — bind `KeyResolverInterface` to change normalization, hashing and hierarchy
   composition.
 - **Schema** — role names of the generated ORM tables are customizable via

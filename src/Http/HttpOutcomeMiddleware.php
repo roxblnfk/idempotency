@@ -10,7 +10,10 @@ use Psr\Http\Message\StreamFactoryInterface;
 use Spiral\Idempotency\Exception\LockedException;
 use Spiral\Idempotency\Exception\MissingKeyException;
 use Spiral\Idempotency\IdempotencyContext;
+use Spiral\Idempotency\Internal\Pipeline\DefaultFailureClassifier;
 use Spiral\Idempotency\Lease\Locked;
+use Spiral\Idempotency\Pipeline\FailureClassifierInterface;
+use Spiral\Idempotency\Pipeline\FailureKind;
 use Spiral\Idempotency\Pipeline\IdempotencyCall;
 use Spiral\Idempotency\Pipeline\ResolutionMiddleware;
 use Spiral\Idempotency\Uncacheable;
@@ -26,7 +29,9 @@ use Spiral\Idempotency\Uncacheable;
  *  - turns a {@see LockedException} into `409 Conflict` + `Retry-After`;
  *  - turns a {@see MissingKeyException} into `400 Bad Request` (a missing key is a client error, not a 500);
  *  - wraps a non-cacheable response (default: status >= 500, transient) in {@see Uncacheable}, so the
- *    lease handler releases the key and a retry re-runs instead of replaying the error forever.
+ *    lease handler releases the key and a retry re-runs instead of replaying the error forever;
+ *  - with a {@see DomainFailureRendererInterface} bound, renders a THROWN domain failure into a response
+ *    before it is cached, so a replay reproduces the same status (see below).
  *
  * Order-independent w.r.t. the key middleware: the resolved key travels in the response snapshot (read
  * from {@see IdempotencyContext::getKey()} inside the operation), so the replay header survives even if
@@ -34,12 +39,19 @@ use Spiral\Idempotency\Uncacheable;
  * also maps key-resolution failures raised by the inner middleware. Non-response results pass through
  * untouched.
  *
- * WARNING: this middleware only snapshots RETURNED responses; a domain failure expressed as a thrown
- * exception bypasses it. On replay such a throw surfaces as a {@see \Spiral\Idempotency\Exception\CachedDomainFailureException}
- * (unless the exception implements {@see \Spiral\Idempotency\ReplayableFailureInterface}), which the
- * application exception handler is likely to render with a DIFFERENT HTTP status than the first attempt.
- * Prefer returning a Response for negative domain outcomes over throwing, so the cached snapshot drives a
- * consistent status on replay.
+ * Domain failures expressed as a THROWN exception need care, because a throw bypasses the response
+ * snapshot: the first attempt is rendered by the application exception handler, while a replay rethrows
+ * a {@see \Spiral\Idempotency\Exception\CachedDomainFailureException} (or the exact type, when the
+ * exception implements {@see \Spiral\Idempotency\ReplayableFailureInterface}) — usually a DIFFERENT
+ * status than the first attempt. Three ways out, best first:
+ *
+ *  1. return a Response for negative domain outcomes instead of throwing — it is snapshotted and
+ *     replayed byte-identically;
+ *  2. bind a {@see DomainFailureRendererInterface}: this middleware then renders Domain-classified
+ *     throwables into a response INSIDE the operation, which restores case 1 without changing the
+ *     action's style (rows cached BEFORE the renderer was bound still replay as a throw);
+ *  3. map {@see \Spiral\Idempotency\Exception\CachedDomainFailureException::$originalClass} in the
+ *     application exception handler.
  *
  * @api
  */
@@ -57,17 +69,27 @@ final readonly class HttpOutcomeMiddleware implements ResolutionMiddleware
     /** @var \Closure(ResponseInterface): bool */
     private \Closure $cacheable;
 
+    private FailureClassifierInterface $classifier;
+
     /**
      * @param (\Closure(ResponseInterface): bool)|null $cacheable decides whether a response may be
      *        cached; default: only status < 500 (transient 5xx are re-run, not replayed)
+     * @param DomainFailureRendererInterface|null $failures renders a thrown domain failure into the
+     *        response to cache and replay; null (default) rethrows it untouched
+     * @param FailureClassifierInterface|null $classifier decides which throwables are Domain and may
+     *        therefore be rendered; defaults to {@see DefaultFailureClassifier}. Bind the same classifier
+     *        the drivers use (the bootloader does) so both agree on what a domain failure is.
      */
     public function __construct(
         private ResponseFactoryInterface $responses,
         private StreamFactoryInterface $streams,
         ?\Closure $cacheable = null,
+        private ?DomainFailureRendererInterface $failures = null,
+        ?FailureClassifierInterface $classifier = null,
     ) {
         $this->cacheable = $cacheable ?? static fn(ResponseInterface $response): bool
             => $response->getStatusCode() < 500;
+        $this->classifier = $classifier ?? new DefaultFailureClassifier();
     }
 
     public function process(IdempotencyCall $call, callable $next): mixed
@@ -75,7 +97,15 @@ final readonly class HttpOutcomeMiddleware implements ResolutionMiddleware
         $executed = false;
         $encoded = $call->withOperation(function (IdempotencyContext $ctx) use (&$executed, $call): mixed {
             $executed = true;
-            return $this->encode(($call->operation)($ctx), $ctx->getKey());
+
+            try {
+                $result = ($call->operation)($ctx);
+            } catch (\Throwable $e) {
+                // Rethrows unless a bound renderer turned a Domain failure into a response.
+                $result = $this->render($e);
+            }
+
+            return $this->encode($result, $ctx->getKey());
         });
 
         try {
@@ -96,6 +126,29 @@ final readonly class HttpOutcomeMiddleware implements ResolutionMiddleware
         return $result instanceof ResponseInterface && \is_string($key) && $key !== ''
             ? $this->decorate($result, $key, replayed: !$executed)
             : $result;
+    }
+
+    /**
+     * Turn a thrown DOMAIN failure into the response the client should see, so the outcome is cached as a
+     * response snapshot and every replay reproduces the same status — the throw path otherwise skips the
+     * snapshot entirely and replays as a different exception type (see the class docblock).
+     *
+     * Runs INSIDE the operation, i.e. beneath the execution pipeline's classifier middleware, so the kind
+     * is decided here by the injected {@see $classifier}. Only Domain is rendered: an Infrastructure or Bug
+     * failure MUST stay a throwable so the driver frees the key (transport/client retries) or reports it —
+     * caching a transient error as the outcome would replay it for the whole retention TTL.
+     *
+     * @return ResponseInterface the rendered domain outcome
+     * @throws \Throwable the original failure, when there is no renderer, the kind is not Domain, or the
+     *         renderer declined it
+     */
+    private function render(\Throwable $e): ResponseInterface
+    {
+        if ($this->failures === null || $this->classifier->classify($e) !== FailureKind::Domain) {
+            throw $e;
+        }
+
+        return $this->failures->render($e) ?? throw $e;
     }
 
     /**

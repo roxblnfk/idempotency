@@ -14,8 +14,10 @@ use Spiral\Core\Container;
 use Spiral\Core\ContainerScope;
 use Spiral\Idempotency\Attribute\Idempotent;
 use Spiral\Idempotency\Config\IdempotencyConfig;
+use Spiral\Idempotency\Exception\CachedDomainFailureException;
 use Spiral\Idempotency\Exception\MisconfigurationException;
 use Spiral\Idempotency\Guarantee;
+use Spiral\Idempotency\Http\DomainFailureRendererInterface;
 use Spiral\Idempotency\Http\HttpKeyMiddleware;
 use Spiral\Idempotency\Http\HttpOutcomeMiddleware;
 use Spiral\Idempotency\IdempotencyContext;
@@ -163,8 +165,58 @@ final class ThrowingHandler implements HandlerInterface
     }
 }
 
+/**
+ * A domain failure that does NOT opt into replay — stands in for an exception the application does not
+ * own (thrown by a library), where {@see ReplayableFailureInterface} is not an option.
+ */
+final class PlainDeclineStub extends \DomainException {}
+
+/**
+ * Handler stub that throws whatever it is given, counting invocations.
+ */
+final class FailingHandler implements HandlerInterface
+{
+    public int $calls = 0;
+
+    public function __construct(private readonly \Throwable $failure) {}
+
+    public function handle(CallContextInterface $context): mixed
+    {
+        ++$this->calls;
+
+        throw $this->failure;
+    }
+}
+
+/**
+ * Renders domain failures into a fixed-status response, or declines them (null) when constructed with a
+ * null status. Counts consultations, so a test can assert a non-Domain failure never reaches it.
+ */
+final class DomainFailureRendererStub implements DomainFailureRendererInterface
+{
+    public int $calls = 0;
+
+    public function __construct(
+        private readonly Psr17Factory $factory,
+        private readonly ?int $status = 422,
+    ) {}
+
+    public function render(\Throwable $failure): ?ResponseInterface
+    {
+        ++$this->calls;
+
+        return $this->status === null ? null : $this->factory
+            ->createResponse($this->status)
+            ->withHeader('Content-Type', 'application/json')
+            ->withBody($this->factory->createStream(
+                (string) \json_encode(['error' => 'declined', 'message' => $failure->getMessage()]),
+            ));
+    }
+}
+
 #[Test]
 #[Covers(IdempotencyInterceptor::class)]
+#[Covers(HttpOutcomeMiddleware::class)]
 final class IdempotencyInterceptorTest
 {
     private Psr17Factory $psr17;
@@ -177,9 +229,14 @@ final class IdempotencyInterceptorTest
     /**
      * @param list<class-string>|null $stack resolution-middleware order (defaults to the canonical
      *        [outcome, key] — outcome outermost)
+     * @param DomainFailureRendererInterface|null $failures bound into the outcome middleware; null keeps
+     *        the throw-through behaviour for domain failures
      */
-    private function interceptor(?array $stack = null, ?LeaseManager $manager = null): IdempotencyInterceptor
-    {
+    private function interceptor(
+        ?array $stack = null,
+        ?LeaseManager $manager = null,
+        ?DomainFailureRendererInterface $failures = null,
+    ): IdempotencyInterceptor {
         $clock = new MutableClock();
         $manager ??= new LeaseManager(new InMemoryLeaseStorage($clock), $clock);
         $registry = new IdempotencyRegistry();
@@ -190,14 +247,21 @@ final class IdempotencyInterceptorTest
         );
 
         // Container resolves the HTTP resolution middleware named in the config stack.
-        $container = new class($this->psr17) implements ContainerInterface {
-            public function __construct(private readonly Psr17Factory $psr17) {}
+        $container = new class($this->psr17, $failures) implements ContainerInterface {
+            public function __construct(
+                private readonly Psr17Factory $psr17,
+                private readonly ?DomainFailureRendererInterface $failures,
+            ) {}
 
             public function get(string $id): object
             {
                 return match ($id) {
                     HttpKeyMiddleware::class => new HttpKeyMiddleware(new KeyResolver()),
-                    HttpOutcomeMiddleware::class => new HttpOutcomeMiddleware($this->psr17, $this->psr17),
+                    HttpOutcomeMiddleware::class => new HttpOutcomeMiddleware(
+                        $this->psr17,
+                        $this->psr17,
+                        failures: $this->failures,
+                    ),
                     default => throw new \LogicException("Unexpected service {$id}"),
                 };
             }
@@ -586,5 +650,135 @@ final class IdempotencyInterceptorTest
         // Body survives intact; the emitter re-derives Content-Length from it.
         Assert::same((string) $replay->getBody(), 'body');
         Assert::same($replay->getHeaderLine('Content-Type'), 'text/plain');
+    }
+
+    public function renderedDomainFailureReplaysWithTheSameStatus(): void
+    {
+        $renderer = new DomainFailureRendererStub($this->psr17);
+        $interceptor = $this->interceptor(failures: $renderer);
+        // A domain exception the application does not own: no ReplayableFailureInterface possible.
+        $handler = new FailingHandler(new PlainDeclineStub('card expired'));
+
+        /** @var ResponseInterface $first */
+        $first = $interceptor->intercept($this->context('withKey', ['key' => 'render-1']), $handler);
+        /** @var ResponseInterface $second */
+        $second = $interceptor->intercept($this->context('withKey', ['key' => 'render-1']), $handler);
+
+        // The throw became a response INSIDE the operation, so it was snapshotted like any returned one:
+        // one handler run, one rendering, and both attempts observe the SAME status and body.
+        Assert::same($handler->calls, 1);
+        Assert::same($renderer->calls, 1);
+        Assert::same($first->getStatusCode(), 422);
+        Assert::same($second->getStatusCode(), 422);
+        Assert::string((string) $second->getBody())->contains('card expired');
+        // ... and the replay is now observable on the failure path too (it was not, before rendering).
+        Assert::same($first->getHeaderLine('Idempotency-Replay'), 'false');
+        Assert::same($second->getHeaderLine('Idempotency-Replay'), 'true');
+        Assert::same($second->getHeaderLine('Idempotency-Key'), AnnotatedFixture::class . '::withKey:render-1');
+    }
+
+    public function infrastructureFailureIsNeverRendered(): void
+    {
+        $renderer = new DomainFailureRendererStub($this->psr17);
+        $interceptor = $this->interceptor(failures: $renderer);
+        // \Error → Infrastructure: must stay a throwable so the driver frees the key and a retry re-runs.
+        $handler = new FailingHandler(new \Error('boom'));
+
+        $thrown = 0;
+        foreach (['first', 'second'] as $_) {
+            try {
+                $interceptor->intercept($this->context('withKey', ['key' => 'render-infra']), $handler);
+            } catch (\Error) {
+                ++$thrown;
+            }
+        }
+
+        Assert::same($thrown, 2);
+        // Never consulted: rendering an infra error would cache a transient failure for the retention TTL.
+        Assert::same($renderer->calls, 0);
+        // The key was released on each attempt, so the operation really re-ran.
+        Assert::same($handler->calls, 2);
+    }
+
+    public function declinedRenderingFallsBackToTheThrow(): void
+    {
+        // Renderer that owns nothing (returns null) — the documented fallback: behaviour is exactly the
+        // same as with no renderer bound at all.
+        $renderer = new DomainFailureRendererStub($this->psr17, status: null);
+        $interceptor = $this->interceptor(failures: $renderer);
+        $handler = new FailingHandler(new PlainDeclineStub('declined'));
+
+        try {
+            $interceptor->intercept($this->context('withKey', ['key' => 'render-null']), $handler);
+            Assert::fail('the declined failure must be rethrown');
+        } catch (PlainDeclineStub) {
+            // first attempt: the original type reaches the application exception handler
+        }
+
+        try {
+            $interceptor->intercept($this->context('withKey', ['key' => 'render-null']), $handler);
+            Assert::fail('the cached domain failure must be rethrown on replay');
+        } catch (CachedDomainFailureException $replayed) {
+            // Replay of a non-replayable failure: the lightweight snapshot, mappable by originalClass.
+            Assert::same($replayed->originalClass, PlainDeclineStub::class);
+        }
+
+        Assert::same($handler->calls, 1);
+        Assert::same($renderer->calls, 1);
+    }
+
+    public function boundRendererIsPickedUpByAutowiring(): void
+    {
+        // The documented wiring: bind the interface, the middleware receives it. With a REAL container,
+        // since the middleware's constructor parameter is optional (nullable + default) — the same
+        // resolution path must also work with nothing bound (see bindsContextInIsolatedScopeWithoutLeaking).
+        $container = new Container();
+        $container->bindSingleton(KeyResolverInterface::class, new KeyResolver());
+        $container->bindSingleton(ResponseFactoryInterface::class, $this->psr17);
+        $container->bindSingleton(StreamFactoryInterface::class, $this->psr17);
+        $container->bindSingleton(DomainFailureRendererInterface::class, new DomainFailureRendererStub($this->psr17));
+
+        $clock = new MutableClock();
+        $registry = new IdempotencyRegistry();
+        $registry->register(
+            'http',
+            new LeaseIdempotency(
+                new LeaseManager(new InMemoryLeaseStorage($clock), $clock),
+                new Pipeline(),
+                lockTtl: 30,
+                retentionTtl: 3600,
+            ),
+            Guarantee::AtLeastOnce,
+        );
+        $config = new IdempotencyConfig([
+            'transports' => ['http' => [HttpOutcomeMiddleware::class, HttpKeyMiddleware::class]],
+        ]);
+        $interceptor = new IdempotencyInterceptor($registry, new KeyResolver(), $container, $config, 'http');
+        $handler = new FailingHandler(new PlainDeclineStub('declined'));
+
+        /** @var ResponseInterface $response */
+        $response = $interceptor->intercept($this->context('withKey', ['key' => 'autowired']), $handler);
+
+        // Rendered, not rethrown → the binding reached the middleware without any explicit factory.
+        Assert::same($response->getStatusCode(), 422);
+    }
+
+    public function renderedTransientFailureIsNotCachedAndReRuns(): void
+    {
+        // A renderer may legitimately map a domain failure to 5xx; the cacheable predicate still governs,
+        // so the outcome is NOT cached and the next attempt re-runs the operation.
+        $renderer = new DomainFailureRendererStub($this->psr17, status: 503);
+        $interceptor = $this->interceptor(failures: $renderer);
+        $handler = new FailingHandler(new PlainDeclineStub('upstream down'));
+
+        /** @var ResponseInterface $first */
+        $first = $interceptor->intercept($this->context('withKey', ['key' => 'render-503']), $handler);
+        /** @var ResponseInterface $second */
+        $second = $interceptor->intercept($this->context('withKey', ['key' => 'render-503']), $handler);
+
+        Assert::same($first->getStatusCode(), 503);
+        Assert::same($second->getStatusCode(), 503);
+        Assert::same($handler->calls, 2);
+        Assert::same($renderer->calls, 2);
     }
 }

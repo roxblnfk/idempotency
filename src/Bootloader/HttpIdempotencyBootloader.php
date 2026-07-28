@@ -39,6 +39,11 @@ use Spiral\Idempotency\KeyResolverInterface;
  * An app adds `IdempotencyInterceptorInterface::class` to its HTTP domain core's interceptor list and
  * lists the HTTP middleware under `transports.http` in `config/idempotency.php`.
  *
+ * Optional: bind {@see \Spiral\Idempotency\Http\DomainFailureRendererInterface} to render THROWN domain
+ * failures into responses before they are cached — that is what keeps the HTTP status of a replay equal
+ * to the first attempt. Unbound (default), such failures are rethrown and the replay may render
+ * differently; see {@see \Spiral\Idempotency\Http\HttpOutcomeMiddleware}.
+ *
  * The app MUST declare `transports.http` — at least as an empty list. A missing section is treated as a
  * misconfiguration: {@see IdempotencyConfig::getTransport()} throws
  * {@see MisconfigurationException} on the first `#[Idempotent]` call rather
