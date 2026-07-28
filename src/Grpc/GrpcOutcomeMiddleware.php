@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Spiral\Idempotency\Grpc;
 
+use Google\Protobuf\Duration;
+use Google\Rpc\RetryInfo;
 use Spiral\Idempotency\Exception\LockedException;
 use Spiral\Idempotency\Exception\MissingKeyException;
 use Spiral\Idempotency\IdempotencyContext;
@@ -32,7 +34,8 @@ use Spiral\RoadRunner\GRPC\StatusCode;
  *    identical status instead of a different one — see below;
  *  - turns a {@see LockedException} (someone else holds PROCESSING for this key) into a
  *    {@see GRPCException} with {@see StatusCode::ABORTED} — the gRPC status the spec recommends for
- *    "retry at a higher level", the analog of the HTTP `409 Conflict`;
+ *    "retry at a higher level", the analog of the HTTP `409 Conflict` — carrying a
+ *    {@see RetryInfo} detail with the suggested delay (the analog of `Retry-After`);
  *  - turns a {@see MissingKeyException} into {@see StatusCode::INVALID_ARGUMENT} (a client error, the
  *    analog of HTTP `400 Bad Request`);
  *  - materializes the method's declared response for a `null` outcome (fire-once duplicate / void
@@ -138,6 +141,7 @@ final readonly class GrpcOutcomeMiddleware implements ResolutionMiddleware
                     $e->lock->retryAfter,
                 ),
                 StatusCode::ABORTED,
+                $this->retryInfo($e->lock->retryAfter),
                 previous: $e,
             );
         } catch (MissingKeyException $e) {
@@ -154,6 +158,23 @@ final readonly class GrpcOutcomeMiddleware implements ResolutionMiddleware
         $result = $this->decode($cached);
 
         return $result ?? $this->emptyResponse($call->context);
+    }
+
+    /**
+     * Machine-readable retry hint for the `ABORTED` lock conflict: `google.rpc.RetryInfo` in the status
+     * details, the canonical gRPC counterpart of the HTTP `Retry-After` header. Generic clients (and
+     * grpc-go / grpc-java retry middleware) read the delay from there; the human-readable message says the
+     * same thing, but nothing can act on it.
+     *
+     * `google/common-protos` is a hard requirement of `spiral/roadrunner-grpc`, so it is present wherever
+     * this middleware can be used at all — no availability guard needed.
+     *
+     * @param int<0, max> $retryAfter seconds until the current holder's lock is expected to expire
+     * @return list<RetryInfo>
+     */
+    private function retryInfo(int $retryAfter): array
+    {
+        return [new RetryInfo(['retry_delay' => new Duration(['seconds' => $retryAfter])])];
     }
 
     /**

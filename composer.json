@@ -22,6 +22,8 @@
         "cycle/schema-builder": "^2.12",
         "cycle/skills": "1.x-dev",
         "cycle/transaction": "^1.1",
+        "google/common-protos": "^3.1 || ^4.0",
+        "google/protobuf": "^3.7 || ^4.0 || ^5.0",
         "infection/infection": "^0.33.2",
         "llm/skills": "dev-master",
         "nyholm/psr7": "^1.8",
@@ -43,7 +45,7 @@
         "predis/predis": "Use the Redis/Valkey lease backend (RedisLeaseConfig) — AtLeastOnce storage over a Redis-compatible server.",
         "spiral/interceptors": "Make HTTP controller actions idempotent declaratively with the #[Idempotent] attribute via IdempotencyInterceptor (also needs a PSR-17 factory).",
         "spiral/queue": "Make queue/job handlers idempotent declaratively with #[Idempotent] via IdempotencyInterceptor bound in the 'queue' scope by QueueIdempotencyBootloader (Locked -> native job retry).",
-        "spiral/roadrunner-grpc": "Make gRPC service methods idempotent declaratively with #[Idempotent] via IdempotencyInterceptor bound in the 'grpc' scope by GrpcIdempotencyBootloader (Locked -> ABORTED status, key from metadata)."
+        "spiral/roadrunner-grpc": "Make gRPC service methods idempotent declaratively with #[Idempotent] via IdempotencyInterceptor bound in the 'grpc' scope by GrpcIdempotencyBootloader (Locked -> ABORTED status with a google.rpc.RetryInfo detail, key from metadata). Pulls google/protobuf + google/common-protos, which the gRPC middleware use directly."
     },
     "autoload": {
         "psr-4": {

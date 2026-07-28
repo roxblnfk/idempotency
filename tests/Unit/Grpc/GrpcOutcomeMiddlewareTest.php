@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Spiral\Idempotency\Tests\Unit\Grpc;
 
+use Google\Rpc\RetryInfo;
 use Spiral\Idempotency\Exception\CachedDomainFailureException;
 use Spiral\Idempotency\Exception\LockedException;
 use Spiral\Idempotency\Exception\MissingKeyException;
@@ -249,6 +250,36 @@ final class GrpcOutcomeMiddlewareTest
         Assert::notNull($thrown);
         Assert::same($thrown->getCode(), StatusCode::ABORTED);
         Assert::same($thrown->getPrevious(), $locked);
+    }
+
+    public function abortedCarriesRetryInfoWithTheDelay(): void
+    {
+        $middleware = new GrpcOutcomeMiddleware();
+        $call = $this->call(static fn(): mixed => null);
+        $locked = new LockedException(new Locked('k', 7, new \DateTimeImmutable()));
+
+        $next = static function (IdempotencyCall $c) use ($locked): never {
+            throw $locked;
+        };
+
+        $thrown = null;
+        try {
+            $middleware->process($call, $next);
+        } catch (GRPCExceptionInterface $e) {
+            $thrown = $e;
+        }
+
+        Assert::notNull($thrown);
+        // The canonical gRPC counterpart of Retry-After: a machine-readable delay in the status details,
+        // which the human-readable message cannot give a client.
+        $details = $thrown->getDetails();
+        Assert::same(\count($details), 1);
+        Assert::true($details[0] instanceof RetryInfo);
+        /** @var RetryInfo $info */
+        $info = $details[0];
+        $delay = $info->getRetryDelay();
+        Assert::notNull($delay);
+        Assert::same((int) $delay->getSeconds(), 7);
     }
 
     public function mapsMissingKeyToInvalidArgument(): void

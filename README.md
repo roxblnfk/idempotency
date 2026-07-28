@@ -258,7 +258,7 @@ The client sends the key as metadata; the server-side key middleware reads `idem
 |---|---|
 | First call | The method runs; the protobuf response message is snapshotted. Response metadata: `idempotency-key`, `idempotency-replay: false` |
 | Retry after completion | The cached message is rebuilt and returned with `idempotency-replay: true`; the method does **not** run |
-| Retry while the first call is in flight | `ABORTED` — the status gRPC recommends for "retry at a higher level" (the analog of HTTP `409`) |
+| Retry while the first call is in flight | `ABORTED` — the status gRPC recommends for "retry at a higher level" (the analog of HTTP `409`) — with a `google.rpc.RetryInfo` detail carrying the suggested delay (the analog of `Retry-After`) |
 | No key in the metadata | `INVALID_ARGUMENT` (the analog of HTTP `400`) |
 | The method threw a `GRPCException` | The **status** is snapshotted (code + message + details) and replayed identically, exact subclass included |
 | ... with a transient status (`UNAVAILABLE`, `DEADLINE_EXCEEDED`, `INTERNAL`, ...) | Not cached: the key is released and a retry re-runs (configurable predicate of `GrpcOutcomeMiddleware`) |
