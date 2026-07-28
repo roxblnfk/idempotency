@@ -256,12 +256,13 @@ The client sends the key as metadata; the server-side key middleware reads `idem
 
 | Situation | Outcome |
 |---|---|
-| First call | The method runs; the protobuf response message is snapshotted |
-| Retry after completion | The cached message is rebuilt and returned; the method does **not** run |
+| First call | The method runs; the protobuf response message is snapshotted. Response metadata: `idempotency-key`, `idempotency-replay: false` |
+| Retry after completion | The cached message is rebuilt and returned with `idempotency-replay: true`; the method does **not** run |
 | Retry while the first call is in flight | `ABORTED` — the status gRPC recommends for "retry at a higher level" (the analog of HTTP `409`) |
 | No key in the metadata | `INVALID_ARGUMENT` (the analog of HTTP `400`) |
 | The method threw a `GRPCException` | The **status** is snapshotted (code + message + details) and replayed identically, exact subclass included |
 | ... with a transient status (`UNAVAILABLE`, `DEADLINE_EXCEEDED`, `INTERNAL`, ...) | Not cached: the key is released and a retry re-runs (configurable predicate of `GrpcOutcomeMiddleware`) |
+| A dedup hit with no cached message (`AtMostOnce` duplicate, void operation) | The method's **declared response type** is returned empty — gRPC has no "empty ACK", and the bridge's invoker requires a `Message` |
 
 Unlike HTTP, no configuration is needed to keep a **failure** replay faithful: over gRPC a negative
 outcome *is* a status, and `code` + `message` + `details` is a complete, deterministic snapshot of what

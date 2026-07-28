@@ -13,8 +13,11 @@ use Spiral\Idempotency\Pipeline\FailureKind;
 use Spiral\Idempotency\Pipeline\IdempotencyCall;
 use Spiral\Idempotency\Pipeline\ResolutionMiddleware;
 use Spiral\Idempotency\Uncacheable;
+use Spiral\Interceptors\Context\CallContextInterface;
+use Spiral\RoadRunner\GRPC\ContextInterface;
 use Spiral\RoadRunner\GRPC\Exception\GRPCException;
 use Spiral\RoadRunner\GRPC\Exception\GRPCExceptionInterface;
+use Spiral\RoadRunner\GRPC\ResponseHeaders;
 use Spiral\RoadRunner\GRPC\StatusCode;
 
 /**
@@ -31,7 +34,15 @@ use Spiral\RoadRunner\GRPC\StatusCode;
  *    {@see GRPCException} with {@see StatusCode::ABORTED} — the gRPC status the spec recommends for
  *    "retry at a higher level", the analog of the HTTP `409 Conflict`;
  *  - turns a {@see MissingKeyException} into {@see StatusCode::INVALID_ARGUMENT} (a client error, the
- *    analog of HTTP `400 Bad Request`).
+ *    analog of HTTP `400 Bad Request`);
+ *  - materializes the method's declared response for a `null` outcome (fire-once duplicate / void
+ *    operation), which gRPC has no room for — see {@see self::emptyResponse()};
+ *  - announces the outcome in the response metadata (`idempotency-replay`, `idempotency-key`), the analog
+ *    of the HTTP replay headers — see {@see self::mark()}.
+ *
+ * Order-independent w.r.t. the key middleware: the resolved key travels in the snapshot (read from
+ * {@see IdempotencyContext::getKey()} inside the operation), so the replay metadata survives even if this
+ * middleware runs inside the key middleware.
  *
  * Why statuses are snapshotted: over gRPC a negative outcome is not a response object but a status, and a
  * status travels as a THROW — which bypasses the response snapshot. Without this, the first attempt would
@@ -105,14 +116,18 @@ final readonly class GrpcOutcomeMiddleware implements ResolutionMiddleware
 
     public function process(IdempotencyCall $call, callable $next): mixed
     {
-        $encoded = $call->withOperation(function (IdempotencyContext $ctx) use ($call): mixed {
+        $executed = false;
+        $encoded = $call->withOperation(function (IdempotencyContext $ctx) use (&$executed, $call): mixed {
+            $executed = true;
+
             try {
-                return $this->encode(($call->operation)($ctx));
+                return $this->encode(($call->operation)($ctx), $ctx->getKey());
             } catch (\Throwable $e) {
                 // Rethrows unless the failure is a domain status (or a mapper turned it into one).
-                return $this->encodeFailure($e);
+                return $this->encodeFailure($e, $ctx->getKey());
             }
         });
+
 
         try {
             $cached = $next($encoded);
@@ -129,13 +144,96 @@ final readonly class GrpcOutcomeMiddleware implements ResolutionMiddleware
             throw new GRPCException($e->getMessage(), StatusCode::INVALID_ARGUMENT, previous: $e);
         }
 
-        return $this->decode($cached);
+        // Read the key from the snapshot (before decode() consumes it), falling back to the call's key — so
+        // the replay metadata does not depend on this middleware's position relative to the key middleware.
+        $key = \is_array($cached) ? ($cached['key'] ?? null) : null;
+        $key = \is_string($key) && $key !== '' ? $key : $call->key;
+        $this->mark($call->context, $key, replayed: !$executed);
+
+        // Throws when the cached outcome is a status; otherwise a message (or a non-message pass-through).
+        $result = $this->decode($cached);
+
+        return $result ?? $this->emptyResponse($call->context);
     }
 
-    private function encode(mixed $result): mixed
+    /**
+     * Announce the replay in the response metadata — the gRPC analog of the HTTP `Idempotency-Replay` /
+     * `Idempotency-Key` headers, so a client can tell a replayed answer from a fresh one.
+     *
+     * Set BEFORE the outcome is decoded, so a replayed STATUS is marked too: `Spiral\RoadRunner\GRPC\Server`
+     * packs the header bag in its `GRPCExceptionInterface` branch as well. The bag lives in the gRPC context
+     * (the server puts it there under its own class name); when it is absent — a non-gRPC stack, or a
+     * runtime that does not provide it — marking is skipped silently.
+     *
+     * @param non-empty-string|null $key
+     */
+    private function mark(mixed $context, ?string $key, bool $replayed): void
+    {
+        $headers = $this->grpcContext($context)?->getValue(ResponseHeaders::class);
+        if (!$headers instanceof ResponseHeaders) {
+            return;
+        }
+
+        // gRPC metadata keys are lowercase per HTTP/2.
+        $headers->set('idempotency-replay', $replayed ? 'true' : 'false');
+        $key === null or $headers->set('idempotency-key', $key);
+    }
+
+    /**
+     * The gRPC context travels as the first positional call argument — see
+     * {@see GrpcKeyMiddleware} for the invoker's call-context shape.
+     */
+    private function grpcContext(mixed $context): ?ContextInterface
+    {
+        if ($context instanceof CallContextInterface) {
+            $first = $context->getArguments()[0] ?? null;
+
+            return $first instanceof ContextInterface ? $first : null;
+        }
+
+        return $context instanceof ContextInterface ? $context : null;
+    }
+
+    /**
+     * A dedup hit that has no cached message resolves to `null` — the AtMostOnce guard's duplicate path, or
+     * a void operation. Over gRPC that is not a valid answer: the bridge's `Invoker::resultToString()`
+     * requires a {@see \Google\Protobuf\Internal\Message}, and the TypeError it would raise degrades into a
+     * worker error (`Server::serve()` catches non-`GRPCExceptionInterface` throwables) instead of a status.
+     *
+     * So materialize the response the service method declares — empty, deterministic, and identical on
+     * every replay. Nothing extra is cached: the stored outcome stays `null` and this runs on the way out.
+     * When the return type is not an instantiable message (no reflection, a builtin, an interface), `null`
+     * passes through as before.
+     */
+    private function emptyResponse(mixed $context): ?object
+    {
+        if (!$context instanceof CallContextInterface) {
+            return null;
+        }
+
+        $type = $context->getTarget()->getReflection()?->getReturnType();
+        if (!$type instanceof \ReflectionNamedType || $type->isBuiltin()) {
+            return null;
+        }
+
+        /** @var class-string $class */
+        $class = $type->getName();
+        if (!\class_exists($class) || !(new \ReflectionClass($class))->isInstantiable()) {
+            return null;
+        }
+
+        $message = new $class();
+
+        return $this->isMessage($message) ? $message : null;
+    }
+
+    /**
+     * @param non-empty-string $key
+     */
+    private function encode(mixed $result, string $key): mixed
     {
         return $this->isMessage($result)
-            ? [self::SNAPSHOT => true] + $this->encodeMessage($result)
+            ? [self::SNAPSHOT => true, 'key' => $key] + $this->encodeMessage($result)
             : $result;
     }
 
@@ -147,11 +245,12 @@ final readonly class GrpcOutcomeMiddleware implements ResolutionMiddleware
      * decided here by the injected {@see $classifier}. Only Domain is snapshotted: an Infrastructure or Bug
      * failure MUST stay a throwable so the driver frees the key (transport/client retries) or reports it.
      *
+     * @param non-empty-string $key
      * @return array<string, mixed>|Uncacheable the snapshot, wrapped when the status is transient
      * @throws \Throwable the original failure, when the kind is not Domain, the failure is not a status and
      *         no mapper is bound, or the mapper declined it
      */
-    private function encodeFailure(\Throwable $e): array|Uncacheable
+    private function encodeFailure(\Throwable $e, string $key): array|Uncacheable
     {
         if ($this->classifier->classify($e) !== FailureKind::Domain) {
             throw $e;
@@ -165,6 +264,7 @@ final readonly class GrpcOutcomeMiddleware implements ResolutionMiddleware
         $code = $status->getCode();
         $snapshot = [
             self::STATUS => true,
+            'key' => $key,
             'class' => $status::class,
             'code' => $code,
             'message' => $status->getMessage(),

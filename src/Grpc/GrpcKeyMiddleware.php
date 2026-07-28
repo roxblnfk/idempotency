@@ -16,11 +16,14 @@ use Spiral\RoadRunner\GRPC\ContextInterface;
  * entry) and normalizes it via the shared {@see KeyResolverInterface}. The gRPC analog of
  * {@see \Spiral\Idempotency\Http\HttpKeyMiddleware} / {@see \Spiral\Idempotency\Queue\QueueKeyMiddleware}.
  *
- * On the server side the invoker builds the {@see CallContextInterface} as
- * `new CallContext(Target::fromPair($service, $method), [$grpcContext, $message])` — so the gRPC context
- * (the metadata carrier) travels as the FIRST positional call argument (`getArguments()[0]`), and the
- * decoded request message as the second. Metadata keys are lowercase per HTTP/2, so the lookup is
- * case-insensitive (a client sending `Idempotency-Key` still matches the default `idempotency-key`).
+ * On the server side `spiral/roadrunner-bridge` (`GRPC\Internal\Invoker`) builds the
+ * {@see CallContextInterface} as
+ * `new CallContext(Target::fromPair($service, $method->name), [$grpcContext, $message])` — so the gRPC
+ * context (the metadata carrier) travels as the FIRST positional call argument (`getArguments()[0]`), and
+ * the decoded request message as the second. Since the target is a service INSTANCE, `fromPair()` resolves
+ * a real {@see \ReflectionMethod}, which is what lets the interceptor read `#[Idempotent]` off the service
+ * method. Metadata keys are lowercase per HTTP/2, so the lookup is case-insensitive (a client sending
+ * `Idempotency-Key` still matches the default `idempotency-key`).
  *
  * Pass-through when the key is already resolved (e.g. from the attribute's arg path) or when the context
  * is not a gRPC call (type-guard, so it is inert in a non-gRPC stack). Uses only `spiral/interceptors`

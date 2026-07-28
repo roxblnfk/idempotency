@@ -19,7 +19,12 @@ use Spiral\Idempotency\Pipeline\IdempotencyCall;
 use Spiral\Idempotency\Pipeline\Pipeline;
 use Spiral\Idempotency\Pipeline\RetryableInterface;
 use Spiral\Idempotency\Tests\Support\MutableClock;
+use Spiral\Interceptors\Context\CallContext;
+use Spiral\Interceptors\Context\Target;
+use Spiral\RoadRunner\GRPC\Context;
+use Spiral\RoadRunner\GRPC\ContextInterface;
 use Spiral\RoadRunner\GRPC\Exception\GRPCException;
+use Spiral\RoadRunner\GRPC\ResponseHeaders;
 use Spiral\RoadRunner\GRPC\Exception\GRPCExceptionInterface;
 use Spiral\RoadRunner\GRPC\StatusCode;
 use Testo\Assert;
@@ -54,6 +59,18 @@ final class OrderRejectedException extends GRPCException
  * A domain failure that is NOT a gRPC status — the case a {@see DomainFailureMapperInterface} covers.
  */
 final class PlainDeclineStub extends \DomainException {}
+
+/**
+ * Stands in for a generated gRPC service: the compiler always declares a concrete response type, which is
+ * what lets the middleware materialize an empty answer for a dedup hit that cached no message.
+ */
+final class FakePingService
+{
+    public function Ping(FakeGrpcMessage $in): FakeGrpcMessage
+    {
+        throw new \LogicException('Not invoked directly — the pipeline terminal produces the result.');
+    }
+}
 
 /**
  * A status the application marks as infrastructure: the classifier must keep it a throwable, so the key is
@@ -108,6 +125,31 @@ final class GrpcOutcomeMiddlewareTest
             operation: $operation,
             options: new ExecuteOptions(),
         );
+    }
+
+    /**
+     * A call whose context is built exactly as `spiral/roadrunner-bridge`'s `GRPC\Internal\Invoker` builds
+     * it: `new CallContext(Target::fromPair($service, $method->name), [$grpcContext, $message])`.
+     */
+    private function serviceCall(\Closure $operation, ?ContextInterface $grpc = null): IdempotencyCall
+    {
+        return new IdempotencyCall(
+            context: new CallContext(
+                Target::fromPair(new FakePingService(), 'Ping'),
+                [$grpc ?? new \stdClass(), new FakeGrpcMessage('in')],
+            ),
+            operation: $operation,
+            options: new ExecuteOptions(),
+        );
+    }
+
+    /**
+     * The gRPC context as the RoadRunner server builds it: metadata plus the mutable response-header bag
+     * under its own class name (`Server::serve()` packs that bag into the reply, error branch included).
+     */
+    private function grpcContext(ResponseHeaders $headers): ContextInterface
+    {
+        return new Context([ResponseHeaders::class => $headers]);
     }
 
     /**
@@ -395,6 +437,94 @@ final class GrpcOutcomeMiddlewareTest
         // Client still gets a proper status on both attempts, but nothing was cached: the key was freed.
         Assert::same($calls, 2);
         Assert::same($codes, [StatusCode::FAILED_PRECONDITION, StatusCode::FAILED_PRECONDITION]);
+    }
+
+    public function replayIsAnnouncedInTheResponseMetadata(): void
+    {
+        $headers = new ResponseHeaders();
+        $middleware = new GrpcOutcomeMiddleware();
+        $driver = $this->driver();
+        $call = $this->serviceCall(
+            static fn(): mixed => new FakeGrpcMessage('pong'),
+            $this->grpcContext($headers),
+        );
+
+        $middleware->process($call, $this->through($driver));
+        Assert::same($headers->get('idempotency-replay'), 'false');
+
+        $middleware->process($call, $this->through($driver));
+
+        // The gRPC analog of Idempotency-Replay: the client can tell a replayed answer from a fresh one.
+        Assert::same($headers->get('idempotency-replay'), 'true');
+        // The key comes from the snapshot, so the marker does not depend on the middleware order.
+        Assert::same($headers->get('idempotency-key'), 'k');
+    }
+
+    public function replayedStatusIsAlsoMarked(): void
+    {
+        $headers = new ResponseHeaders();
+        $middleware = new GrpcOutcomeMiddleware();
+        $driver = $this->driver();
+        $call = $this->serviceCall(
+            static function (): never {
+                throw new OrderRejectedException('order already shipped');
+            },
+            $this->grpcContext($headers),
+        );
+
+        foreach (['first', 'replay'] as $_) {
+            try {
+                $middleware->process($call, $this->through($driver));
+            } catch (GRPCExceptionInterface) {
+                // the status is the outcome; the marker must be set before it is rethrown
+            }
+        }
+
+        // Server::serve() packs the header bag in its GRPCExceptionInterface branch too, so a replayed
+        // failure is observable as a replay just like a replayed message.
+        Assert::same($headers->get('idempotency-replay'), 'true');
+        Assert::same($headers->get('idempotency-key'), 'k');
+    }
+
+    public function markingIsSkippedWithoutAHeaderBag(): void
+    {
+        // Non-gRPC stack (or a runtime that provides no header bag): stay inert, no error.
+        $middleware = new GrpcOutcomeMiddleware();
+        $driver = $this->driver();
+        $call = $this->serviceCall(static fn(): mixed => new FakeGrpcMessage('pong'));
+
+        $result = $middleware->process($call, $this->through($driver));
+
+        Assert::true($result instanceof FakeGrpcMessage);
+    }
+
+    public function nullOutcomeBecomesTheDeclaredEmptyResponse(): void
+    {
+        // A fire-once duplicate (AtMostOnce) or a void operation resolves to null. The bridge's Invoker
+        // requires a Message — `resultToString(Message $result)` — and its TypeError would surface as a
+        // worker error, not a status. The declared response type is materialized instead.
+        $middleware = new GrpcOutcomeMiddleware();
+        $ctx = $this->context();
+        $call = $this->serviceCall(static fn(): mixed => null);
+
+        $result = $middleware->process($call, static fn(IdempotencyCall $c): mixed => ($c->operation)($ctx));
+
+        Assert::true($result instanceof FakeGrpcMessage);
+        /** @var FakeGrpcMessage $result */
+        Assert::same($result->payload, '');
+    }
+
+    public function nullOutcomePassesThroughWithoutAServiceTarget(): void
+    {
+        // No reflectable target (non-gRPC stack, or a closure target): stay inert rather than inventing a
+        // response out of thin air.
+        $middleware = new GrpcOutcomeMiddleware();
+        $ctx = $this->context();
+        $call = $this->call(static fn(): mixed => null);
+
+        $result = $middleware->process($call, static fn(IdempotencyCall $c): mixed => ($c->operation)($ctx));
+
+        Assert::null($result);
     }
 
     public function foreignStatusCodeDegradesToUnknown(): void
