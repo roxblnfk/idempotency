@@ -23,6 +23,18 @@ types appear ONLY in `src/Queue/RetryableLockException` (adapts `Locked` → the
 `RetryableExceptionInterface` so `RetryPolicyInterceptor` re-enqueues); the key/retry middleware use
 only `spiral/interceptors`. We do NOT reimplement retry/backoff — Spiral's engine owns it.
 
+## Shipped AI skill — keep it in sync
+
+`skills/spiral-idempotency/` is an AI skill this package ships to consumer projects (picked up by
+the `llm/skills` Composer plugin discovery). When you add a feature or change public behaviour —
+attribute/config parameters, bootloaders, transport semantics (HTTP/queue/gRPC responses, statuses,
+headers), failure classification, GC policy — update the skill too: `SKILL.md`, the relevant
+`references/*.md`, the `scripts/*.php` if the package/config surface they inspect changed, and
+`assets/*` (migration + SQL DDL) whenever `Driver\Cycle\CycleSchema` changes — the assets mirror
+its column layout.
+Same rule as the README: the skill documents the contract, so a behaviour change without a skill
+update ships stale guidance to every consumer.
+
 ## Testing
 
 Two suites (see `testo.php`), framework is **Testo** (not PHPUnit): `#[Test]`, `#[Covers]`,
