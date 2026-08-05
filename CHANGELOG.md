@@ -1,0 +1,55 @@
+# Changelog
+
+## [0.2.0](https://github.com/spiral/idempotency/compare/0.1.0...0.2.0) (2026-08-05)
+
+
+### Features
+
+* AtMostOnce dedup-guard guarantee (fire-once, optional best-effort result) ([bf2de86](https://github.com/spiral/idempotency/commit/bf2de867e8055c2bb4a458fdba8a0585926426ce))
+* bind IdempotencyInterceptor to the http transport in HttpIdempotencyBootloader ([890d505](https://github.com/spiral/idempotency/commit/890d505adfc463a6f10cd15f83bf81929d656320))
+* classifier execution middleware and ClassifiedException marker ([721f37f](https://github.com/spiral/idempotency/commit/721f37f0920e3b5d7c3132ba5d5077037e959076))
+* config-driven idempotency pipeline over HTTP ([cd040a8](https://github.com/spiral/idempotency/commit/cd040a8013c385f3dbd61e2645bbf34f49166e3c))
+* Cycle driver for lease and inbox storage ([c83fa44](https://github.com/spiral/idempotency/commit/c83fa44120c0e6a9ea881c2080b0f5d08f059c07))
+* expose the interceptor via a root scoped proxy over IdempotencyInterceptorInterface ([60dda1c](https://github.com/spiral/idempotency/commit/60dda1cc8c3d17f9ce0b6ab2b9ea41f5f019826f))
+* fail fast on unresolvable key path, unknown transport and class-level attribute ([9aa9651](https://github.com/spiral/idempotency/commit/9aa96512facf438fed0e644e5f20216319fbc11c))
+* faithful domain-failure replay via ReplayableFailureInterface ([f16e3c4](https://github.com/spiral/idempotency/commit/f16e3c411f1a7a35c48ee9d6978860a97d490a25))
+* framework integration layer for declarative idempotency ([d4cc057](https://github.com/spiral/idempotency/commit/d4cc05707bd4c6329a99bed0c0dab5ca06096cfd))
+* **gc:** garbage-collect expired idempotency rows (CycleGarbageCollector) ([91a40d5](https://github.com/spiral/idempotency/commit/91a40d57bf5cbd15ca74af439f21446243d9940b))
+* **grpc:** carry google.rpc.RetryInfo on the ABORTED lock conflict ([61504a6](https://github.com/spiral/idempotency/commit/61504a62e1b56997c39d214a124b09afb2046454))
+* **grpc:** idempotent gRPC server transport (Locked -&gt; ABORTED) ([56f6412](https://github.com/spiral/idempotency/commit/56f641236a97296a1982b35b9baf1cb7f912aac8))
+* **grpc:** snapshot thrown gRPC statuses so a replay answers identically ([470dc0f](https://github.com/spiral/idempotency/commit/470dc0fcce8f91236dcc6468a5c0a3967f46a2c3))
+* **http:** render thrown domain failures into cached responses ([acd4826](https://github.com/spiral/idempotency/commit/acd4826c8a1f564b1e21b65e8a48cc71e4c524a3))
+* internal idempotency implementations ([1d16aae](https://github.com/spiral/idempotency/commit/1d16aaec7e193ef12a4fa47400c932a15b53b3ef))
+* **lease:** cooperative lease renewal via renew() heartbeat and FiberRenewalMiddleware ([b53c5e6](https://github.com/spiral/idempotency/commit/b53c5e6006ac77391a72b1f50506274d444c90cd))
+* make MisconfigurationException friendly with actionable solutions ([ae42d92](https://github.com/spiral/idempotency/commit/ae42d92733ae4ee63a12d7d8cb38336b7fcda843))
+* map a missing idempotency key to 400 instead of 500 ([418d310](https://github.com/spiral/idempotency/commit/418d3105670ec3b6a2836c9c2249b48ba41eecb4))
+* namespace idempotency keys by operation identity with attribute scope override ([e163833](https://github.com/spiral/idempotency/commit/e1638337453067436355ebe0f8346fcfb3e41e72))
+* per-call TTL overrides via ExecuteOptions ([869777a](https://github.com/spiral/idempotency/commit/869777a47535bb2974a2eaac040e183608668b30))
+* pipeline scaffolding with universal orchestrator ([338e572](https://github.com/spiral/idempotency/commit/338e5727026c840990a0c02c37a297ca66535da4))
+* public idempotency API and core contracts ([0cc2556](https://github.com/spiral/idempotency/commit/0cc25565ec679f4bfc842d3ade03d0573b3880ba))
+* **queue:** idempotent queue/jobs transport over spiral/queue ([72361ec](https://github.com/spiral/idempotency/commit/72361ecdd15e906ae7b7334dda1e784ae95e696d))
+* **redis:** Redis/Valkey lease backend (AtLeastOnce) ([838e9f7](https://github.com/spiral/idempotency/commit/838e9f7d4463aa9d3773e741114e9ebe4693afed))
+* skip caching transient responses (Uncacheable) ([6ffe18f](https://github.com/spiral/idempotency/commit/6ffe18f64862cadbb0eaa6980e46f2c474786ce0))
+
+
+### Bug Fixes
+
+* bind idempotency context in an isolated scope ([36abcd6](https://github.com/spiral/idempotency/commit/36abcd6afad86c4a4bc3a826b22c95e10333bc7b))
+* make http replay headers independent of middleware order ([0551324](https://github.com/spiral/idempotency/commit/0551324886ad4fbf8675d01113901651a6c1fc33))
+* MySQL false lease-loss on no-op renew ([ec2a9c7](https://github.com/spiral/idempotency/commit/ec2a9c7602cb701753e1ab75fc9c54f98a8f5ba4))
+* preserve the operation outcome when the lease is lost at the terminal transition ([939a2ee](https://github.com/spiral/idempotency/commit/939a2ee58e45f6e9e3f117a33784ff22519ffcf5))
+
+
+### Documentation
+
+* clarify interceptor registration (alias proxy, no HandlerInterface boilerplate) ([460a2fa](https://github.com/spiral/idempotency/commit/460a2fa80ab0688d978ef1956b65f8dae9c32b63))
+* README with quick start, guarantees and customization guide ([14d1767](https://github.com/spiral/idempotency/commit/14d17676b0ef4d393960f5f1569611608ddadd40))
+* **skills:** ship an AI skill for consumer projects ([51da15d](https://github.com/spiral/idempotency/commit/51da15d3a1e2a41192d97e4d2bb61c23f0de62b0))
+
+
+### Code Refactoring
+
+* bind the http interceptor in the http dispatcher scope instead of root ([4ff41a8](https://github.com/spiral/idempotency/commit/4ff41a872606fa3411a29dfa18b86431575e096f))
+* detach ClassifiedException from the public exception hierarchy ([6e2ec0c](https://github.com/spiral/idempotency/commit/6e2ec0cc303edd62fca6e2157ed787f517110091))
+* lease handler runs the execution pipeline ([42b213c](https://github.com/spiral/idempotency/commit/42b213c0e26a102728dedd5d4a0f67deee3ec9d7))
+* minor hardening (pipeline cache, container serializer, schema definitions, docs) ([58cf8bd](https://github.com/spiral/idempotency/commit/58cf8bd9aaf91b85d45d551e4155acbfa595ee52))
