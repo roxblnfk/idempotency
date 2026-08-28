@@ -257,6 +257,30 @@ final class LeaseIdempotencyTest
         }
     }
 
+    public function cachedFailureWithoutSnapshotThrowsIdempotencyException(): void
+    {
+        // A COMPLETED record marked as a failure (success = false) but whose stored result is not a
+        // snapshot array (here: null) — e.g. a corrupt or truncated write. replay() cannot reconstruct a
+        // throwable, so it must surface an IdempotencyException naming the key rather than silently
+        // returning null as if it were a success.
+        $clock = new MutableClock();
+        $manager = new LeaseManager(new InMemoryLeaseStorage($clock), $clock);
+
+        $acquired = $manager->acquire('no-snapshot', 30);
+        \assert($acquired instanceof Acquired);
+        $manager->complete('no-snapshot', $acquired->token, false, null, 3600);
+
+        $driver = new LeaseIdempotency($manager, new Pipeline(), lockTtl: 30, retentionTtl: 3600);
+
+        try {
+            $driver->execute('no-snapshot', static fn(): string => 'never reached');
+            Assert::fail('a cached failure without a snapshot must throw');
+        } catch (IdempotencyException $e) {
+            Assert::string($e->getMessage())->contains('missing its snapshot');
+            Assert::string($e->getMessage())->contains('no-snapshot');
+        }
+    }
+
     public function infrastructureFailureAbortsAndAllowsRetry(): void
     {
         $driver = $this->driver();

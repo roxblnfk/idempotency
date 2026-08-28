@@ -59,6 +59,22 @@ final class AnnotatedFixture
         throw new \LogicException('Not invoked directly.');
     }
 
+    // An empty key-path: `key: ''` is not null, so the arg-path resolver runs and finds nothing — a
+    // misconfiguration that must fail fast rather than silently fall back to the transport.
+    #[Idempotent(storage: 'http', key: '')]
+    public function emptyKeyPath(string $key): ResponseInterface
+    {
+        throw new \LogicException('Not invoked directly.');
+    }
+
+    // A dot-notation key-path that dives into an object argument's property (`payment.id`): the resolver
+    // traverses the array argument into the object and reads the scalar leaf.
+    #[Idempotent(storage: 'http', key: 'payment.id')]
+    public function withObjectKey(object $payment): ResponseInterface
+    {
+        throw new \LogicException('Not invoked directly.');
+    }
+
     public function plain(): ResponseInterface
     {
         throw new \LogicException('Not invoked directly.');
@@ -780,5 +796,102 @@ final class IdempotencyInterceptorTest
         Assert::same($second->getStatusCode(), 503);
         Assert::same($handler->calls, 2);
         Assert::same($renderer->calls, 2);
+    }
+
+    public function resolvesKeyByTraversingIntoAnObjectArgument(): void
+    {
+        $interceptor = $this->interceptor();
+        $handler = new CountingHandler($this->psr17);
+
+        // The attribute key-path is `payment.id`: the first segment picks the array argument, the second
+        // dives into the object's public property to read the scalar key.
+        $payment = (object) ['id' => 'obj-key-1'];
+
+        /** @var ResponseInterface $first */
+        $first = $interceptor->intercept($this->context('withObjectKey', ['payment' => $payment]), $handler);
+        /** @var ResponseInterface $second */
+        $second = $interceptor->intercept($this->context('withObjectKey', ['payment' => $payment]), $handler);
+
+        // The nested property resolved to the dedup key, so the second call replayed the first response.
+        Assert::same($handler->calls, 1);
+        Assert::same((string) $second->getBody(), 'run#1');
+        Assert::same($first->getHeaderLine('Idempotency-Key'), AnnotatedFixture::class . '::withObjectKey:obj-key-1');
+        Assert::same($second->getHeaderLine('Idempotency-Replay'), 'true');
+    }
+
+    public function emptyAttributeKeyPathFailsFast(): void
+    {
+        $interceptor = $this->interceptor();
+        $handler = new CountingHandler($this->psr17);
+
+        // `key: ''` is a non-null path that resolves to nothing — a misconfiguration, not a null-key
+        // fallback to the transport. It must fail fast and never run the handler.
+        $thrown = null;
+        try {
+            $interceptor->intercept($this->context('emptyKeyPath', ['key' => 'x']), $handler);
+        } catch (MisconfigurationException $e) {
+            $thrown = $e;
+        }
+
+        Assert::notNull($thrown);
+        Assert::same($handler->calls, 0);
+    }
+
+    public function passesThroughWhenTargetHasNoReflection(): void
+    {
+        $interceptor = $this->interceptor();
+        $handler = new CountingHandler($this->psr17);
+
+        // A path-string target carries no reflection → no attribute can be read → straight pass-through.
+        $context = new CallContext(Target::fromPathArray(['Some', 'action']), []);
+
+        /** @var ResponseInterface $response */
+        $response = $interceptor->intercept($context, $handler);
+
+        Assert::same($handler->calls, 1);
+        Assert::same((string) $response->getBody(), 'run#1');
+    }
+
+    public function nonResponseResultPassesThroughUntouchedAndReplays(): void
+    {
+        $interceptor = $this->interceptor();
+
+        // A handler whose result is NOT a PSR-7 response (a bare array): the outcome middleware must
+        // neither snapshot it on the way in (encode) nor rebuild it on the way out (decode). It passes
+        // through untouched, and the cached value replays verbatim — no Idempotency-* headers are added
+        // (those only decorate a ResponseInterface).
+        $handler = new class implements HandlerInterface {
+            public int $calls = 0;
+
+            public function handle(CallContextInterface $context): mixed
+            {
+                ++$this->calls;
+
+                return ['run' => $this->calls];
+            }
+        };
+
+        $first = $interceptor->intercept($this->context('withKey', ['key' => 'non-response']), $handler);
+        $second = $interceptor->intercept($this->context('withKey', ['key' => 'non-response']), $handler);
+
+        Assert::same($handler->calls, 1);          // cached, so the handler ran only once
+        Assert::same($first, ['run' => 1]);         // returned untouched (encode passed it through)
+        Assert::same($second, ['run' => 1]);        // replayed verbatim (decode passed it through)
+    }
+
+    public function passesThroughForClosureTargetWithoutAttribute(): void
+    {
+        $interceptor = $this->interceptor();
+        $handler = new CountingHandler($this->psr17);
+
+        // A closure target reflects to a ReflectionFunction (not a method): no stable cache key, and it
+        // carries no Idempotent attribute → pass-through, the handler runs.
+        $context = new CallContext(Target::fromClosure(static fn(): int => 1), []);
+
+        /** @var ResponseInterface $response */
+        $response = $interceptor->intercept($context, $handler);
+
+        Assert::same($handler->calls, 1);
+        Assert::same((string) $response->getBody(), 'run#1');
     }
 }

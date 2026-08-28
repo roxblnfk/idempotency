@@ -160,6 +160,27 @@ final class GrpcKeyMiddlewareTest
         Assert::same($received->key, (new KeyResolver())->resolve('zzz', null));
     }
 
+    public function skipsNonMatchingMetadataEntries(): void
+    {
+        $middleware = new GrpcKeyMiddleware(new KeyResolver());
+        // A real gRPC context also carries non-metadata entries (e.g. keyed by class-name); the loop must
+        // skip those and keep scanning until it reaches the matching metadata key.
+        $call = $this->call($this->grpcContext([
+            'x-trace-id' => ['trace-9'],
+            \stdClass::class => new \stdClass(),
+            'idempotency-key' => ['abc-3'],
+        ]));
+
+        $received = null;
+        $middleware->process($call, static function (IdempotencyCall $call) use (&$received): mixed {
+            $received = $call;
+            return null;
+        });
+
+        Assert::notNull($received);
+        Assert::same($received->key, (new KeyResolver())->resolve('abc-3', null));
+    }
+
     public function missingMetadataThrowsMissingKey(): void
     {
         $middleware = new GrpcKeyMiddleware(new KeyResolver());

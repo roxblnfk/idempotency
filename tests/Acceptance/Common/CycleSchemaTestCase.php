@@ -10,11 +10,14 @@ use Cycle\Schema\Generator\ValidateEntities;
 use Cycle\Schema\Registry;
 use Spiral\Idempotency\Config\IdempotencyConfig;
 use Spiral\Idempotency\Config\StorageConfig;
+use Spiral\Idempotency\Driver\Cycle\CycleAtMostOnceConfig;
 use Spiral\Idempotency\Driver\Cycle\CycleInboxConfig;
 use Spiral\Idempotency\Driver\Cycle\CycleLeaseConfig;
 use Spiral\Idempotency\Driver\Cycle\Internal\Schema\DefaultSchemaNaming;
 use Spiral\Idempotency\Driver\Cycle\Internal\Schema\IdempotencyTablesGenerator;
 use Spiral\Idempotency\Driver\Cycle\Schema\SchemaNamingInterface;
+use Spiral\Idempotency\Guarantee;
+use Spiral\Idempotency\StorageFactoryInterface;
 use Testo\Assert;
 use Testo\Codecov\Covers;
 
@@ -71,6 +74,56 @@ abstract class CycleSchemaTestCase extends DatabaseTestCase
         Assert::same($table->getPrimaryKeys(), ['key']);
         Assert::true($table->hasColumn('expire_time'));
         Assert::true($table->hasIndex(['expire_time']));
+    }
+
+    public function registersAtMostOnceStorageAsRole(): void
+    {
+        $config = new IdempotencyConfig([
+            'storages' => [
+                'guards' => new CycleAtMostOnceConfig(table: 'at_most_once_tbl'),
+            ],
+        ]);
+
+        $registry = $this->registry($config);
+
+        Assert::true($registry->hasEntity('idempotency:guards'));
+
+        $entity = $registry->getEntity('idempotency:guards');
+        Assert::same($registry->getTable($entity), 'at_most_once_tbl');
+
+        $fields = $entity->getFields();
+        foreach (['key', 'result', 'create_time'] as $column) {
+            Assert::true($fields->has($column), "missing column {$column}");
+        }
+        Assert::true($fields->get('key')->isPrimary());
+    }
+
+    public function nonCycleStorageIsIgnored(): void
+    {
+        $foreign = new class extends StorageConfig {
+            public function guarantee(): Guarantee
+            {
+                return Guarantee::AtLeastOnce;
+            }
+
+            public function factory(): string
+            {
+                return StorageFactoryInterface::class;
+            }
+        };
+
+        $config = new IdempotencyConfig([
+            'storages' => [
+                'payments' => new CycleLeaseConfig(table: 'lease_tbl'),
+                'remote' => $foreign,
+            ],
+        ]);
+
+        $registry = $this->registry($config);
+
+        // The Cycle storage still becomes a role; the foreign one is skipped entirely.
+        Assert::true($registry->hasEntity('idempotency:payments'));
+        Assert::false($registry->hasEntity('idempotency:remote'));
     }
 
     public function customNamingIsApplied(): void

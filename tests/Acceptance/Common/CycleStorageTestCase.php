@@ -119,6 +119,34 @@ abstract class CycleStorageTestCase extends DatabaseTestCase
         Assert::null($storage->read($key));
     }
 
+    public function errorDeletesRecordLikeAbort(): void
+    {
+        // error() is the failure-path alias of abort(): it deletes the owned record so the key is free
+        // to retry. Same CAS-by-token semantics — a wrong token deletes nothing.
+        $key = $this->key();
+        $storage = new CycleLeaseStorage($this->db(), new MutableClock());
+        $storage->acquire($key, 'tok', 30);
+
+        Assert::false($storage->error($key, 'wrong')); // not the owner: nothing removed
+        Assert::same($storage->read($key)?->state, LeaseState::Processing);
+
+        Assert::true($storage->error($key, 'tok')); // owner: record deleted
+        Assert::null($storage->read($key));
+    }
+
+    public function completeRejectsNonStringResult(): never
+    {
+        // The blob column stores an already-serialized string (opaque). Handing complete() a raw
+        // non-string result is a programming error and must fail loudly, not persist garbage.
+        $key = $this->key();
+        $storage = new CycleLeaseStorage($this->db(), new MutableClock());
+        $storage->acquire($key, 'tok', 30);
+
+        Expect::exception(\InvalidArgumentException::class)->withMessageContaining('already-serialized');
+
+        $storage->complete($key, 'tok', true, ['not', 'a', 'string'], 3600);
+    }
+
     public function expiredRecordIsTakenOverOnAcquire(): void
     {
         $key = $this->key();
@@ -142,6 +170,19 @@ abstract class CycleStorageTestCase extends DatabaseTestCase
         $clock->advance(11);
 
         Assert::null($storage->read($key));
+    }
+
+    public function readTreatsEmptyStoredKeyAsAbsent(): void
+    {
+        // Defensive guard: a live row whose key column decodes to an empty string is reported as
+        // absent — read() never hands back a StoredEntry with a blank key.
+        $storage = new CycleLeaseStorage($this->db(), new MutableClock());
+        // Clear any leftover empty-key row from a prior run on a persistent driver.
+        $this->db()->delete('idempotency', ['key' => ''])->run();
+
+        Assert::true($storage->acquire('', 'tok', 30)); // stores a live row keyed by the empty string
+
+        Assert::null($storage->read('')); // ...yet read() treats the empty-keyed row as absent
     }
 
     public function renewExtendsExpiry(): void
@@ -265,6 +306,24 @@ abstract class CycleStorageTestCase extends DatabaseTestCase
 
         Assert::same($driver->execute($key, $op), 'value');
         Assert::same($driver->execute($key, $op), 'value');
+        Assert::same($calls, 1);
+    }
+
+    public function inboxDeduplicatesNullResultWithoutReRunning(): void
+    {
+        // The first run's operation returns null, so nothing is written to the result column. A duplicate
+        // hits the ON CONFLICT skip and reads back a live inbox row whose result is null — it must still
+        // dedup (signal "already processed" with null) rather than re-run the operation.
+        $key = $this->key();
+        $driver = $this->inboxDriver();
+        $calls = 0;
+        $op = static function () use (&$calls): ?string {
+            ++$calls;
+            return null;
+        };
+
+        Assert::null($driver->execute($key, $op));
+        Assert::null($driver->execute($key, $op)); // row present, stored result null → null
         Assert::same($calls, 1);
     }
 
@@ -417,6 +476,51 @@ abstract class CycleStorageTestCase extends DatabaseTestCase
         Assert::same($driver->execute($key, $op), 'v');
         // ...and the duplicate replays it from the cache without re-running the operation.
         Assert::same($driver->execute($key, $op), 'v');
+        Assert::same($calls, 1);
+    }
+
+    public function atMostOnceReportsAtMostOnceGuarantee(): void
+    {
+        // The driver advertises the guarantee it backs so the bootloader can reject an alias whose
+        // declared guarantee it cannot provide.
+        Assert::same($this->atMostOnceDriver()->guarantee(), Guarantee::AtMostOnce);
+    }
+
+    public function atMostOnceUnwrapsUncacheableResult(): void
+    {
+        // An operation may return an Uncacheable wrapper; the driver unwraps it so the caller sees the
+        // raw value, and (with the cache on) the unwrapped value — not the wrapper — is what gets stored
+        // and replayed to a duplicate.
+        $key = $this->key();
+        $driver = $this->atMostOnceDriver(cacheResult: true);
+        $calls = 0;
+        $op = static function () use (&$calls): Uncacheable {
+            ++$calls;
+            return new Uncacheable('unwrapped');
+        };
+
+        // First run: the wrapper is unwrapped before it reaches the caller.
+        Assert::same($driver->execute($key, $op), 'unwrapped');
+        // Duplicate: the unwrapped value was cached, so the replay returns it without re-running.
+        Assert::same($driver->execute($key, $op), 'unwrapped');
+        Assert::same($calls, 1);
+    }
+
+    public function atMostOnceReplaysNullWhenCachedResultIsNull(): void
+    {
+        // Result cache on, but the first run produced null: nothing is written to the result column, so a
+        // duplicate reads a live marker row whose result is null and must still signal "already
+        // processed" with null (not re-run the effect).
+        $key = $this->key();
+        $driver = $this->atMostOnceDriver(cacheResult: true);
+        $calls = 0;
+        $op = static function () use (&$calls): ?string {
+            ++$calls;
+            return null;
+        };
+
+        Assert::null($driver->execute($key, $op));
+        Assert::null($driver->execute($key, $op)); // marker present, cached result null → null
         Assert::same($calls, 1);
     }
 

@@ -87,6 +87,36 @@ final class LeaseManagerTest
         $manager->complete('k', 'not-the-owner', true, null, 3600);
     }
 
+    public function abortWithWrongTokenIsRejected(): never
+    {
+        $manager = $this->manager(new MutableClock());
+        $manager->acquire('k', 30);
+
+        Expect::exception(LeaseLostException::class);
+
+        $manager->abort('k', 'not-the-owner');
+    }
+
+    public function errorWithWrongTokenIsRejected(): never
+    {
+        $manager = $this->manager(new MutableClock());
+        $manager->acquire('k', 30);
+
+        Expect::exception(LeaseLostException::class);
+
+        $manager->error('k', 'not-the-owner');
+    }
+
+    public function renewWithWrongTokenIsRejected(): never
+    {
+        $manager = $this->manager(new MutableClock());
+        $manager->acquire('k', 30);
+
+        Expect::exception(LeaseLostException::class);
+
+        $manager->renew('k', 'not-the-owner', 30);
+    }
+
     public function abortFreesTheKey(): void
     {
         $manager = $this->manager(new MutableClock());

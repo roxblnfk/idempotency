@@ -15,6 +15,7 @@ use Spiral\Idempotency\Tests\Support\MutableClock;
 use Testo\Assert;
 use Testo\Codecov\Covers;
 use Testo\Core\Exception\SkipTest;
+use Testo\Expect;
 use Testo\Filter\Group;
 use Testo\Test;
 
@@ -118,6 +119,50 @@ final class RedisLeaseStorageTest
 
         Assert::true($storage->renew($key, 'tok', 30));   // still the owner
         Assert::false($storage->renew($key, 'other', 30)); // a non-owner token fails
+    }
+
+    /**
+     * error() is an alias of abort(): the owner's call deletes the record, a non-owner token is rejected.
+     */
+    public function errorDeletesRecordLikeAbort(): void
+    {
+        $key = $this->key();
+        $storage = $this->storage();
+        $storage->acquire($key, 'tok', 30);
+
+        Assert::false($storage->error($key, 'wrong'));  // non-owner: record survives
+        Assert::same($storage->read($key)?->state, LeaseState::Processing);
+
+        Assert::true($storage->error($key, 'tok'));      // owner: record deleted
+        Assert::null($storage->read($key));
+    }
+
+    /**
+     * A hash with data but no live TTL (PTTL -1, i.e. no EXPIRE set) is treated as absent by read().
+     */
+    public function readTreatsNoTtlAsAbsent(): void
+    {
+        $key = $this->key();
+        $storage = $this->storage();
+
+        // Write the record directly with no EXPIRE, so PTTL returns -1 (present but no live TTL).
+        $this->client()->hset('idempotency-test:' . $key, 'state', 'PROCESSING', 'token', 'tok');
+
+        Assert::null($storage->read($key));
+    }
+
+    /**
+     * The storage layer stores opaque blobs only: a non-string, non-null result is rejected before any write.
+     */
+    public function completeRejectsNonStringResult(): void
+    {
+        $key = $this->key();
+        $storage = $this->storage();
+        $storage->acquire($key, 'tok', 30);
+
+        Expect::exception(\InvalidArgumentException::class)->withMessageContaining('already-serialized string');
+
+        $storage->complete($key, 'tok', true, ['not', 'a', 'string'], 3600);
     }
 
     public function managerFlowAcquireCompleteReplay(): void

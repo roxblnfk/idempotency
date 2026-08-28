@@ -73,6 +73,23 @@ final class FakePingService
     }
 }
 
+/** A response contract, not a concrete message: a service declaring it cannot be materialized on a null outcome. */
+interface FakePingResponseInterface {}
+
+/**
+ * A generated-service stand-in whose methods declare NON-materializable response types: a builtin/void
+ * return and an interface return. Both must leave a null outcome as null rather than inventing a response.
+ */
+final class FakeVoidService
+{
+    public function Ping(FakeGrpcMessage $in): void {}
+
+    public function Report(FakeGrpcMessage $in): FakePingResponseInterface
+    {
+        throw new \LogicException('Not invoked directly — the pipeline terminal produces the result.');
+    }
+}
+
 /**
  * A status the application marks as infrastructure: the classifier must keep it a throwable, so the key is
  * released and a retry re-runs instead of the status being cached as the outcome.
@@ -138,6 +155,22 @@ final class GrpcOutcomeMiddlewareTest
             context: new CallContext(
                 Target::fromPair(new FakePingService(), 'Ping'),
                 [$grpc ?? new \stdClass(), new FakeGrpcMessage('in')],
+            ),
+            operation: $operation,
+            options: new ExecuteOptions(),
+        );
+    }
+
+    /**
+     * A service call targeting an arbitrary generated-service method, so the middleware reads the exact
+     * declared return type from reflection — the signal that decides whether a null outcome is materialized.
+     */
+    private function serviceCallFor(object $service, string $method, \Closure $operation): IdempotencyCall
+    {
+        return new IdempotencyCall(
+            context: new CallContext(
+                Target::fromPair($service, $method),
+                [new \stdClass(), new FakeGrpcMessage('in')],
             ),
             operation: $operation,
             options: new ExecuteOptions(),
@@ -556,6 +589,47 @@ final class GrpcOutcomeMiddlewareTest
         $result = $middleware->process($call, static fn(IdempotencyCall $c): mixed => ($c->operation)($ctx));
 
         Assert::null($result);
+    }
+
+    public function nullOutcomePassesThroughForABuiltinReturnType(): void
+    {
+        // The service method declares a builtin/void return (not a message type). There is nothing to
+        // materialize, so a null outcome stays null instead of being coerced into a fabricated response.
+        $middleware = new GrpcOutcomeMiddleware();
+        $ctx = $this->context();
+        $call = $this->serviceCallFor(new FakeVoidService(), 'Ping', static fn(): mixed => null);
+
+        $result = $middleware->process($call, static fn(IdempotencyCall $c): mixed => ($c->operation)($ctx));
+
+        Assert::null($result);
+    }
+
+    public function nullOutcomePassesThroughForANonInstantiableReturnType(): void
+    {
+        // The declared return type is an interface — a named type, but not an instantiable class. The
+        // middleware cannot `new` it, so a null outcome passes through as null rather than fataling.
+        $middleware = new GrpcOutcomeMiddleware();
+        $ctx = $this->context();
+        $call = $this->serviceCallFor(new FakeVoidService(), 'Report', static fn(): mixed => null);
+
+        $result = $middleware->process($call, static fn(IdempotencyCall $c): mixed => ($c->operation)($ctx));
+
+        Assert::null($result);
+    }
+
+    public function passesThroughAPlainArrayResult(): void
+    {
+        // A non-message array result is neither a status snapshot nor a message snapshot: decode() must
+        // return it verbatim, not mistake it for one of the tagged envelopes.
+        $middleware = new GrpcOutcomeMiddleware();
+        $ctx = $this->context();
+        $call = $this->call(static fn(): mixed => ['answer' => 42]);
+
+        $next = static fn(IdempotencyCall $c): mixed => ($c->operation)($ctx);
+
+        $result = $middleware->process($call, $next);
+
+        Assert::same($result, ['answer' => 42]);
     }
 
     public function foreignStatusCodeDegradesToUnknown(): void

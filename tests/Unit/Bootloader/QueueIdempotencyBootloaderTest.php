@@ -125,6 +125,16 @@ final class QueueIdempotencyBootloaderTest
         Assert::same($result, 'handled');
     }
 
+    public function declaresIdempotencyBootloaderAsDependency(): void
+    {
+        $bootloader = new QueueIdempotencyBootloader();
+
+        Assert::same(
+            $bootloader->defineDependencies(),
+            [\Spiral\Idempotency\Bootloader\IdempotencyBootloader::class],
+        );
+    }
+
     public function proxyInvokedOutsideTransportScopeFailsFast(): never
     {
         $container = $this->container();

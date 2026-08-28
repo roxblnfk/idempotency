@@ -8,6 +8,7 @@ use Psr\Container\ContainerInterface;
 use Spiral\Core\Container;
 use Spiral\Core\Scope;
 use Spiral\Idempotency\Bootloader\HttpIdempotencyBootloader;
+use Spiral\Idempotency\Bootloader\IdempotencyBootloader;
 use Spiral\Idempotency\Config\IdempotencyConfig;
 use Spiral\Idempotency\Exception\MisconfigurationException;
 use Spiral\Idempotency\IdempotencyRegistry;
@@ -76,6 +77,13 @@ final class HttpIdempotencyBootloaderTest
         };
 
         return [$context, $handler];
+    }
+
+    public function requiresCoreIdempotencyBootloader(): void
+    {
+        $bootloader = new HttpIdempotencyBootloader();
+
+        Assert::same($bootloader->defineDependencies(), [IdempotencyBootloader::class]);
     }
 
     public function resolvesRealInterceptorInsideHttpScope(): void
