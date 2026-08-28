@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/spiral/idempotency/compare/0.2.0...0.2.1) (2026-08-28)
+
+
+### Documentation
+
+* **skills:** state the mandatory transports.&lt;name&gt; contract; keep code samples copy-clean ([2803d79](https://github.com/spiral/idempotency/commit/2803d794557ffa60c67f03e0e0151f002fe54fd2))
+
 ## [0.2.0](https://github.com/spiral/idempotency/compare/0.1.0...0.2.0) (2026-08-05)
 
 
