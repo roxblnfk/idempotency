@@ -36,10 +36,26 @@ abstract class DatabaseTestCase
      * A unique idempotency key, distinct across every call in the process — the only thing isolating
      * one test's rows from another's in the shared tables.
      *
+     * The {@see self::runToken()} suffix keeps it distinct across separate runs too: the counter alone
+     * restarts at 0 each process, so re-running against a still-populated database (containers left up
+     * between runs) would otherwise reuse `k-1`, `k-2`, … and collide with the previous run's rows.
+     *
      * @return non-empty-string
      */
     final protected function key(string $prefix = 'k'): string
     {
-        return $prefix . '-' . (++self::$sequence);
+        return $prefix . '-' . self::runToken() . '-' . (++self::$sequence);
+    }
+
+    /**
+     * A token unique to this test process, mixed into every generated key and table name so re-running
+     * the suite against a persistent database cannot collide with rows a previous run left behind. The
+     * PID is the same per-process discriminator the Redis lease test already uses for this reason.
+     *
+     * @return non-empty-string
+     */
+    final protected static function runToken(): string
+    {
+        return (string) \getmypid();
     }
 }

@@ -752,7 +752,7 @@ abstract class CycleStorageTestCase extends DatabaseTestCase
      */
     private function gcTable(string $prefix): string
     {
-        return 'gc_' . $prefix . '_' . (++self::$gcSequence);
+        return 'gc_' . $prefix . '_' . self::runToken() . '_' . (++self::$gcSequence);
     }
 
     private function tableRowCount(string $table, string $key): int
