@@ -56,15 +56,17 @@ approval before installing it**; never `composer require` them unprompted.
 
 ```php
 // app/src/Application/Kernel.php — defineBootloaders()
-\Spiral\Idempotency\Bootloader\IdempotencyBootloader::class,       // always
-\Spiral\Idempotency\Bootloader\HttpIdempotencyBootloader::class,   // opt-in: HTTP transport
-\Spiral\Idempotency\Bootloader\QueueIdempotencyBootloader::class,  // opt-in: queue transport
-\Spiral\Idempotency\Bootloader\GrpcIdempotencyBootloader::class,   // opt-in: gRPC transport
-\Spiral\Idempotency\Bootloader\CycleSchemaBootloader::class,       // opt-in: tables via cycle:sync/migrate
+\Spiral\Idempotency\Bootloader\IdempotencyBootloader::class,
+\Spiral\Idempotency\Bootloader\HttpIdempotencyBootloader::class,
+\Spiral\Idempotency\Bootloader\QueueIdempotencyBootloader::class,
+\Spiral\Idempotency\Bootloader\GrpcIdempotencyBootloader::class,
+\Spiral\Idempotency\Bootloader\CycleSchemaBootloader::class,
 ```
 
-Register only the transports the project actually dispatches — each one binds a
-transport-flavored interceptor in its own dispatcher scope (`http` / `queue` / `grpc`).
+`IdempotencyBootloader` is always required. The rest are opt-in: register only the transports the
+project actually dispatches — each one binds a transport-flavored interceptor in its own
+dispatcher scope (`http` / `queue` / `grpc`) — and `CycleSchemaBootloader` only when the tables
+go through `cycle:sync`/`cycle:migrate` (step 5, rung 1).
 
 ## 3. Config — `app/config/idempotency.php`
 
@@ -77,22 +79,28 @@ use Spiral\Idempotency\Http\HttpOutcomeMiddleware;
 return [
     'default' => 'payments',
 
-    // Resolution middleware per transport, outer → inner: the outcome middleware is OUTERMOST
-    // (marshals responses: replay headers, Locked → 409/ABORTED, missing key → 400),
-    // the key middleware sits inside it (extracts and normalizes the key).
+    // Resolution middleware per transport, outer → inner.
     'transports' => [
         'http' => [HttpOutcomeMiddleware::class, HttpKeyMiddleware::class],
         // 'queue' => [QueueRetryMiddleware::class, QueueKeyMiddleware::class],
         // 'grpc'  => [GrpcOutcomeMiddleware::class, GrpcKeyMiddleware::class],
     ],
 
-    // Semantic aliases: handler code names an alias; driver + declared guarantee live here.
+    // Semantic aliases: handler code names an alias; driver + guarantee live here.
     'storages' => [
         'payments' => new CycleLeaseConfig(table: 'idempotency_lease', lockTtl: 30, retentionTtl: 3600),
         'orders'   => new CycleInboxConfig(table: 'idempotency_inbox'),
     ],
 ];
 ```
+
+Rules for the `transports` section (uncomment/add the entries for the project):
+
+- **Every transport whose bootloader is registered must have an entry** — `[]` is valid (the key
+  then comes only from the attribute), but a *missing* one throws `MisconfigurationException` on
+  the first `#[Idempotent]` call.
+- **Order is outer → inner, outcome middleware outermost** (it marshals responses: replay headers,
+  `Locked` → 409/ABORTED, missing key → 400), the key middleware inside it.
 
 Storage config classes (all data-only; the driver is picked by the config class):
 

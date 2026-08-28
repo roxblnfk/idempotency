@@ -1,6 +1,6 @@
 ---
 name: spiral-idempotency
-description: Set up and use the spiral/idempotency package — protect HTTP endpoints, queue jobs, and gRPC methods from duplicated side-effects on retries. Use when adding \#[Idempotent] to a handler, configuring app/config/idempotency.php, choosing between AtLeastOnce / AtMostOnce / ExactlyOnce guarantees, wiring IdempotencyInterceptorInterface into a domain core, handling Idempotency-Key headers, or debugging replayed responses / LockedException / MissingKeyException. Trigger on "idempotent", "idempotency key", "deduplicate requests/jobs", "exactly once", "response replay", "transactional inbox".
+description: "Set up and use the spiral/idempotency package — protect HTTP endpoints, queue jobs, and gRPC methods from duplicated side-effects on retries. Use when adding #[Idempotent] to a handler, configuring app/config/idempotency.php, choosing between AtLeastOnce / AtMostOnce / ExactlyOnce guarantees, wiring IdempotencyInterceptorInterface into a domain core, handling Idempotency-Key headers, or debugging replayed responses / LockedException / MissingKeyException. Trigger on \"idempotent\", \"idempotency key\", \"deduplicate requests/jobs\", \"exactly once\", \"response replay\", \"transactional inbox\"."
 ---
 
 # spiral/idempotency — setup and usage
@@ -49,6 +49,8 @@ Both scripts are read-only; `<this-skill-dir>` is the directory containing this 
 ## Pitfalls checklist
 
 - Reference `IdempotencyInterceptorInterface` (alias), never the concrete `IdempotencyInterceptor`.
+- Every registered transport bootloader needs its `transports.<name>` entry in config — `[]` is
+  valid, a missing one throws on the first `#[Idempotent]` call.
 - Outcome middleware outer, key middleware inner in every `transports.<name>` list.
 - Queue: `RetryPolicyInterceptor` must stay outer of the idempotency interceptor on consume.
 - Inbox = `TransactionMode::Exclusive`: no surrounding transaction around the handler.
