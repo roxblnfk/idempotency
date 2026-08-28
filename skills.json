@@ -1,5 +1,13 @@
 {
     "$schema": "https://raw.githubusercontent.com/roxblnfk/skills/master/resources/skills.schema.json",
     "target": ".claude/skills",
-    "discovery": true
+    "discovery": true,
+    "sources": [
+        {
+            "from": "github",
+            "package": "mattpocock/skills",
+            "ref": "~1.2.3",
+            "skills": ["writing-for-agents"]
+        }
+    ]
 }
