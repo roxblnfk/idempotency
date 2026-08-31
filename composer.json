@@ -71,6 +71,11 @@
         "psalm": "psalm",
         "infection": "infection"
     },
+    "extra": {
+        "skills": {
+            "source": "skills"
+        }
+    },
     "minimum-stability": "dev",
     "prefer-stable": true,
     "config": {
