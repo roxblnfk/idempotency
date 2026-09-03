@@ -6,7 +6,7 @@ namespace Spiral\Idempotency\Tests\Acceptance\Driver\Redis;
 
 use Spiral\Idempotency\Driver\Redis\Internal\RedisLeaseStorage;
 use Spiral\Idempotency\Driver\Redis\PredisCommands;
-use Spiral\Idempotency\Internal\Lease\LeaseManager;
+use Spiral\Idempotency\Internal\Lease\DefaultLeaseManager;
 use Spiral\Idempotency\Internal\Lease\RandomTokenFactory;
 use Spiral\Idempotency\Lease\Acquired;
 use Spiral\Idempotency\Lease\AlreadyCompleted;
@@ -125,7 +125,7 @@ final class RedisLeaseStorageTest
     {
         $key = $this->key();
         $clock = new MutableClock();
-        $manager = new LeaseManager($this->storage(), $clock, new RandomTokenFactory());
+        $manager = new DefaultLeaseManager($this->storage(), $clock, new RandomTokenFactory());
 
         $acquired = $manager->acquire($key, 30);
         Assert::instanceOf($acquired, Acquired::class);
@@ -140,7 +140,7 @@ final class RedisLeaseStorageTest
     public function managerReportsLockedWhileProcessing(): void
     {
         $key = $this->key();
-        $manager = new LeaseManager($this->storage(), new MutableClock(), new RandomTokenFactory());
+        $manager = new DefaultLeaseManager($this->storage(), new MutableClock(), new RandomTokenFactory());
         $manager->acquire($key, 30);
 
         Assert::instanceOf($manager->acquire($key, 30), Locked::class);

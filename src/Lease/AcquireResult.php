@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Spiral\Idempotency\Lease;
 
 /**
- * Discriminated result of {@see LeaseManagerInterface::acquire()} — four outcomes instead of
+ * Discriminated result of {@see LeaseManager::acquire()} — four outcomes instead of
  * "lease or exception". COMPLETED and PROCESSING are fundamentally
  * different situations (replay the cache vs answer 409), so distinguishing them is mandatory.
  *

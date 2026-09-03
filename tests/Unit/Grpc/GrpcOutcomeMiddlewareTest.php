@@ -9,16 +9,16 @@ use Spiral\Idempotency\Exception\CachedDomainFailureException;
 use Spiral\Idempotency\Exception\LockedException;
 use Spiral\Idempotency\Exception\MissingKeyException;
 use Spiral\Idempotency\ExecuteOptions;
-use Spiral\Idempotency\Grpc\DomainFailureMapperInterface;
+use Spiral\Idempotency\Grpc\DomainFailureMapper;
 use Spiral\Idempotency\Grpc\GrpcOutcomeMiddleware;
 use Spiral\Idempotency\IdempotencyContext;
 use Spiral\Idempotency\Internal\Lease\LeaseIdempotency;
-use Spiral\Idempotency\Internal\Lease\LeaseManager;
+use Spiral\Idempotency\Internal\Lease\DefaultLeaseManager;
 use Spiral\Idempotency\Internal\Lease\Storage\InMemoryLeaseStorage;
 use Spiral\Idempotency\Lease\Locked;
 use Spiral\Idempotency\Pipeline\IdempotencyCall;
 use Spiral\Idempotency\Pipeline\Pipeline;
-use Spiral\Idempotency\Pipeline\RetryableInterface;
+use Spiral\Idempotency\Pipeline\Retryable;
 use Spiral\Idempotency\Tests\Support\MutableClock;
 use Spiral\Interceptors\Context\CallContext;
 use Spiral\Interceptors\Context\Target;
@@ -57,7 +57,7 @@ final class OrderRejectedException extends GRPCException
 }
 
 /**
- * A domain failure that is NOT a gRPC status — the case a {@see DomainFailureMapperInterface} covers.
+ * A domain failure that is NOT a gRPC status — the case a {@see DomainFailureMapper} covers.
  */
 final class PlainDeclineStub extends \DomainException {}
 
@@ -77,7 +77,7 @@ final class FakePingService
  * A status the application marks as infrastructure: the classifier must keep it a throwable, so the key is
  * released and a retry re-runs instead of the status being cached as the outcome.
  */
-final class RetryableStatusException extends GRPCException implements RetryableInterface
+final class RetryableStatusException extends GRPCException implements Retryable
 {
     protected const CODE = StatusCode::FAILED_PRECONDITION;
 }
@@ -85,7 +85,7 @@ final class RetryableStatusException extends GRPCException implements RetryableI
 /**
  * Maps {@see PlainDeclineStub} to a status; declines everything else (returns null).
  */
-final class DomainFailureMapperStub implements DomainFailureMapperInterface
+final class DomainFailureMapperStub implements DomainFailureMapper
 {
     public int $calls = 0;
 
@@ -162,7 +162,7 @@ final class GrpcOutcomeMiddlewareTest
         $clock = new MutableClock();
 
         return new LeaseIdempotency(
-            new LeaseManager(new InMemoryLeaseStorage($clock), $clock),
+            new DefaultLeaseManager(new InMemoryLeaseStorage($clock), $clock),
             new Pipeline(),
             lockTtl: 30,
             retentionTtl: 3600,
@@ -449,7 +449,7 @@ final class GrpcOutcomeMiddlewareTest
         $middleware = new GrpcOutcomeMiddleware();
         $driver = $this->driver();
         $calls = 0;
-        // A status the app marked RetryableInterface → Infrastructure: the classifier gate must keep it a
+        // A status the app marked Retryable → Infrastructure: the classifier gate must keep it a
         // throwable even though its code (FAILED_PRECONDITION) is a cacheable one.
         $call = $this->call(static function () use (&$calls): never {
             ++$calls;

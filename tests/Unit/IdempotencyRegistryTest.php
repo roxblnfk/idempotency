@@ -7,8 +7,8 @@ namespace Spiral\Idempotency\Tests\Unit;
 use Spiral\Idempotency\Exception\MisconfigurationException;
 use Spiral\Idempotency\ExecuteOptions;
 use Spiral\Idempotency\Guarantee;
-use Spiral\Idempotency\GuaranteeProviderInterface;
-use Spiral\Idempotency\IdempotencyInterface;
+use Spiral\Idempotency\GuaranteeProvider;
+use Spiral\Idempotency\Idempotency;
 use Spiral\Idempotency\IdempotencyRegistry;
 use Testo\Assert;
 use Testo\Codecov\Covers;
@@ -86,9 +86,9 @@ final class IdempotencyRegistryTest
         (new IdempotencyRegistry())->get('missing');
     }
 
-    private function driver(Guarantee $guarantee): IdempotencyInterface
+    private function driver(Guarantee $guarantee): Idempotency
     {
-        return new class ($guarantee) implements IdempotencyInterface, GuaranteeProviderInterface {
+        return new class ($guarantee) implements Idempotency, GuaranteeProvider {
             public function __construct(private readonly Guarantee $guarantee) {}
 
             public function execute(string $key, \Closure $operation, ?ExecuteOptions $options = null): mixed

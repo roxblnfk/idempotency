@@ -33,7 +33,7 @@ Decide from the report:
 |---|---|
 | `cycle/database` present | `CycleLeaseConfig` / `CycleInboxConfig` / `CycleAtMostOnceConfig` are available |
 | `cycle/database` < 2.21 | The `DO NOTHING` affected-row dedup is broken on MySQL/Postgres below that — tell the user an upgrade is required (their call to run it) |
-| A Redis client is present (`predis/predis`, `ext-redis`, any other) or a Redis service exists | `RedisLeaseConfig` is available for AtLeastOnce (no GC needed); a non-predis client needs a `Driver\Redis\RedisCommandsInterface` adapter binding |
+| A Redis client is present (`predis/predis`, `ext-redis`, any other) or a Redis service exists | `RedisLeaseConfig` is available for AtLeastOnce (no GC needed); a non-predis client needs a `Driver\Redis\RedisCommands` adapter binding |
 | `spiral/queue` present | The queue transport applies (`QueueIdempotencyBootloader`) |
 | `spiral/roadrunner-bridge` + `spiral/roadrunner-grpc` present | The gRPC transport applies (`GrpcIdempotencyBootloader`) |
 | `spiral/cycle-bridge` present | `CycleSchemaBootloader` can put the tables into the ORM schema (`cycle:sync`/`cycle:migrate`) |
@@ -110,7 +110,7 @@ Storage config classes (all data-only; the driver is picked by the config class)
 | `Driver\Cycle\CycleLeaseConfig` | AtLeastOnce | `connection` (DBAL db name, null = default), `table` = `'idempotency'`, `lockTtl` = 30, `retentionTtl` = 86400, `heartbeatThreshold` = 0.5 |
 | `Driver\Cycle\CycleInboxConfig` | ExactlyOnce | `connection`, `table` = `'inbox'`, `transactionMode` = `TransactionMode::Exclusive`, `flushMode`, `retentionTtl` = null (keep forever) |
 | `Driver\Cycle\CycleAtMostOnceConfig` | AtMostOnce | `connection`, `table` = `'idempotency_at_most_once'`, `cacheResult` = false (duplicate gets `null`), `retentionTtl` = null |
-| `Driver\Redis\RedisLeaseConfig` | AtLeastOnce | `keyPrefix` = `'idempotency:'`, `lockTtl` = 30, `retentionTtl` = 86400; needs a Redis connection in the container: a `Driver\Redis\RedisCommandsInterface` binding (three-command adapter over any Redis client) or `predis/predis` with a `\Predis\ClientInterface` binding; server-side TTL, no GC needed |
+| `Driver\Redis\RedisLeaseConfig` | AtLeastOnce | `keyPrefix` = `'idempotency:'`, `lockTtl` = 30, `retentionTtl` = 86400; needs a Redis connection in the container: a `Driver\Redis\RedisCommands` binding (three-command adapter over any Redis client) or `predis/predis` with a `\Predis\ClientInterface` binding; server-side TTL, no GC needed |
 
 The declared guarantee is verified against the driver capability at bootstrap — a mismatch fails
 fast instead of silently weakening the promise.
@@ -120,16 +120,16 @@ fast instead of silently weakening the promise.
 Add one line to the existing domain-core interceptor list:
 
 ```php
-use Spiral\Idempotency\Interceptor\IdempotencyInterceptorInterface;
+use Spiral\Idempotency\Interceptor\IdempotencyInterceptor;
 
 protected const INTERCEPTORS = [
     // ...existing interceptors (Cycle, Guard, ... — innermost after auth):
-    IdempotencyInterceptorInterface::class,
+    IdempotencyInterceptor::class,
 ];
 ```
 
 The alias is a forwarding proxy resolved per dispatcher scope (`http` / `queue` / `grpc`), so one
-domain core serves every transport. Referencing the concrete `IdempotencyInterceptor` class
+domain core serves every transport. Referencing the concrete `PipelineIdempotencyInterceptor` class
 **fails** — it is deliberately unbound in the root container. Outside a transport scope the proxy
 fails fast with `MisconfigurationException`.
 
@@ -137,7 +137,7 @@ For the queue, the interceptor goes on the **consume** side — either in `app/c
 under `interceptors.consume`, or via the bootloader:
 
 ```php
-$queue->addConsumeInterceptor(IdempotencyInterceptorInterface::class);
+$queue->addConsumeInterceptor(IdempotencyInterceptor::class);
 ```
 
 Keep Spiral's default `RetryPolicyInterceptor` **outer** of it in the consume list (see the queue
@@ -151,7 +151,7 @@ Table names always come from the storage configs; the Redis lease needs no schem
 1. **ORM schema injection** (needs `spiral/cycle-bridge`): with `CycleSchemaBootloader`
    registered, the tables join the ORM schema and the project's normal workflow creates them —
    `php app.php cycle:sync`, or generate a migration with `php app.php cycle:migrate` and run
-   `php app.php migrate`. ORM role names are customizable via `SchemaNamingInterface`.
+   `php app.php migrate`. ORM role names are customizable via `SchemaNaming`.
 2. **Migration artifact** (project uses `cycle/migrations`, but the ORM-schema injection is
    unavailable — e.g. no `spiral/cycle-bridge`, or `cycle:sync`/`cycle:migrate` is not part of
    the project's workflow): copy [`assets/create_idempotency_tables.php`](../assets/create_idempotency_tables.php)

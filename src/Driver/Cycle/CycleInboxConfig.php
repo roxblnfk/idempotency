@@ -9,7 +9,7 @@ use Cycle\Transaction\TransactionMode;
 use Spiral\Idempotency\Config\StorageConfig;
 use Spiral\Idempotency\Driver\Cycle\Internal\CycleInboxFactory;
 use Spiral\Idempotency\Guarantee;
-use Spiral\Idempotency\StorageFactoryInterface;
+use Spiral\Idempotency\StorageFactory;
 
 /**
  * Data-only config for an ExactlyOnce-effect inbox in a Cycle DBAL connection.
@@ -57,7 +57,7 @@ final class CycleInboxConfig extends StorageConfig
     }
 
     /**
-     * @return class-string<StorageFactoryInterface>
+     * @return class-string<StorageFactory>
      */
     public function factory(): string
     {

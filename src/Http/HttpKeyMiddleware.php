@@ -6,7 +6,7 @@ namespace Spiral\Idempotency\Http;
 
 use Psr\Http\Message\ServerRequestInterface;
 use Spiral\Idempotency\Exception\MissingKeyException;
-use Spiral\Idempotency\KeyResolverInterface;
+use Spiral\Idempotency\KeyResolver;
 use Spiral\Idempotency\Pipeline\IdempotencyCall;
 use Spiral\Idempotency\Pipeline\ResolutionMiddleware;
 use Spiral\Interceptors\Context\AttributedInterface;
@@ -14,7 +14,7 @@ use Spiral\Interceptors\Context\AttributedInterface;
 /**
  * HTTP resolution middleware: extracts the raw key from a PSR-7 request in the call context (the
  * `Idempotency-Key` header, then a body/query field) and normalizes it via the shared
- * {@see KeyResolverInterface}. Replaces the old scope-bound `HttpKeySource` — the request now travels
+ * {@see KeyResolver}. Replaces the old scope-bound `HttpKeySource` — the request now travels
  * in {@see IdempotencyCall::$context}, so no scope binding is needed; add this middleware to the HTTP
  * pipeline in config instead.
  *
@@ -30,7 +30,7 @@ final readonly class HttpKeyMiddleware implements ResolutionMiddleware
      * @param non-empty-string $field body/query field used when the header is absent
      */
     public function __construct(
-        private KeyResolverInterface $resolver,
+        private KeyResolver $resolver,
         private string $header = 'Idempotency-Key',
         private string $field = 'key',
     ) {}

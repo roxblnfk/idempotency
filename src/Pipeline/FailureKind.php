@@ -6,7 +6,7 @@ namespace Spiral\Idempotency\Pipeline;
 
 /**
  * The three natures of a failure. This is a PIPELINE concept, not a core one — the core
- * (LeaseManager/storage) never imports it. Determinism and "will a retry help" are two independent
+ * (DefaultLeaseManager/storage) never imports it. Determinism and "will a retry help" are two independent
  * axes, hence three categories.
  *
  * @api

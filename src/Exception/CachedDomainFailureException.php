@@ -10,7 +10,7 @@ namespace Spiral\Idempotency\Exception;
  * the object itself — serializing arbitrary exceptions is fragile (their trace can capture closures).
  *
  * This is the fallback replay type: the original exception's exact class is NOT reconstructed here. For
- * a faithful, exact-type replay, make the domain exception implement {@see \Spiral\Idempotency\ReplayableFailureInterface}
+ * a faithful, exact-type replay, make the domain exception implement {@see \Spiral\Idempotency\ReplayableFailure}
  * (the driver then rethrows the original type from its payload); otherwise map the failure by
  * {@see $originalClass} in the application exception handler, so an idempotent replay renders the same
  * HTTP status as the first attempt.

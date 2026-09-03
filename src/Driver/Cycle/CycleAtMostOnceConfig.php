@@ -7,7 +7,7 @@ namespace Spiral\Idempotency\Driver\Cycle;
 use Spiral\Idempotency\Config\StorageConfig;
 use Spiral\Idempotency\Driver\Cycle\Internal\CycleAtMostOnceFactory;
 use Spiral\Idempotency\Guarantee;
-use Spiral\Idempotency\StorageFactoryInterface;
+use Spiral\Idempotency\StorageFactory;
 
 /**
  * Data-only config for an AtMostOnce dedup-guard over a Cycle DBAL connection.
@@ -58,7 +58,7 @@ final class CycleAtMostOnceConfig extends StorageConfig
     }
 
     /**
-     * @return class-string<StorageFactoryInterface>
+     * @return class-string<StorageFactory>
      */
     public function factory(): string
     {

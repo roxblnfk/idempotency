@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Spiral\Idempotency\Grpc;
 
 use Spiral\Idempotency\Exception\MissingKeyException;
-use Spiral\Idempotency\KeyResolverInterface;
+use Spiral\Idempotency\KeyResolver;
 use Spiral\Idempotency\Pipeline\IdempotencyCall;
 use Spiral\Idempotency\Pipeline\ResolutionMiddleware;
 use Spiral\Interceptors\Context\CallContextInterface;
@@ -13,7 +13,7 @@ use Spiral\RoadRunner\GRPC\ContextInterface;
 
 /**
  * gRPC resolution middleware: extracts the raw key from the call's gRPC metadata (the `idempotency-key`
- * entry) and normalizes it via the shared {@see KeyResolverInterface}. The gRPC analog of
+ * entry) and normalizes it via the shared {@see KeyResolver}. The gRPC analog of
  * {@see \Spiral\Idempotency\Http\HttpKeyMiddleware} / {@see \Spiral\Idempotency\Queue\QueueKeyMiddleware}.
  *
  * On the server side `spiral/roadrunner-bridge` (`GRPC\Internal\Invoker`) builds the
@@ -37,7 +37,7 @@ final readonly class GrpcKeyMiddleware implements ResolutionMiddleware
      * @param non-empty-string $metadataKey gRPC metadata entry carrying the key (lowercase by convention)
      */
     public function __construct(
-        private KeyResolverInterface $resolver,
+        private KeyResolver $resolver,
         private string $metadataKey = 'idempotency-key',
     ) {}
 

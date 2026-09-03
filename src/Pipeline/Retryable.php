@@ -11,6 +11,6 @@ namespace Spiral\Idempotency\Pipeline;
  *
  * @api
  */
-interface RetryableInterface
+interface Retryable
 {
 }

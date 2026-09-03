@@ -8,7 +8,7 @@ use Spiral\Boot\Bootloader\Bootloader;
 use Spiral\Cycle\Bootloader\SchemaBootloader;
 use Spiral\Idempotency\Driver\Cycle\Internal\Schema\DefaultSchemaNaming;
 use Spiral\Idempotency\Driver\Cycle\Internal\Schema\IdempotencyTablesGenerator;
-use Spiral\Idempotency\Driver\Cycle\Schema\SchemaNamingInterface;
+use Spiral\Idempotency\Driver\Cycle\Schema\SchemaNaming;
 
 /**
  * Opt-in: integrates the Cycle-backed idempotency tables into the application's ORM schema, so they
@@ -17,7 +17,7 @@ use Spiral\Idempotency\Driver\Cycle\Schema\SchemaNamingInterface;
  *
  * Register this bootloader only in a Spiral app that uses spiral/cycle-bridge (it depends on the
  * bridge's {@see SchemaBootloader}). Customize the generated role names by binding your own
- * {@see SchemaNamingInterface}.
+ * {@see SchemaNaming}.
  *
  * @api
  */
@@ -31,7 +31,7 @@ final class CycleSchemaBootloader extends Bootloader
     public function defineBindings(): array
     {
         return [
-            SchemaNamingInterface::class => DefaultSchemaNaming::class,
+            SchemaNaming::class => DefaultSchemaNaming::class,
         ];
     }
 

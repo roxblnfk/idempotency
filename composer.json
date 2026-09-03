@@ -43,11 +43,11 @@
         "cycle/database": "Use the bundled Cycle driver (lease/inbox storage over a Cycle DBAL connection) — required by everything under Spiral\\Idempotency\\Driver\\Cycle.",
         "cycle/transaction": "Required by the bundled Cycle driver's inbox storage (single-transaction ExactlyOnce commit) — everything under Spiral\\Idempotency\\Driver\\Cycle.",
         "spiral/cycle-bridge": "Integrate the idempotency tables into the Cycle ORM schema (cycle:migrate / cycle:sync) via CycleSchemaBootloader — also pulls cycle/schema-builder.",
-        "predis/predis": "Default client for the Redis/Valkey lease backend (RedisLeaseConfig) — AtLeastOnce storage over a Redis-compatible server. Not needed when RedisCommandsInterface (Driver/Redis) is bound to an adapter over your own Redis client.",
+        "predis/predis": "Default client for the Redis/Valkey lease backend (RedisLeaseConfig) — AtLeastOnce storage over a Redis-compatible server. Not needed when RedisCommands (Driver/Redis) is bound to an adapter over your own Redis client.",
         "spiral/interceptors": "Make HTTP controller actions idempotent declaratively with the #[Idempotent] attribute via IdempotencyInterceptor (also needs a PSR-17 factory).",
         "spiral/queue": "Make queue/job handlers idempotent declaratively with #[Idempotent] via IdempotencyInterceptor bound in the 'queue' scope by QueueIdempotencyBootloader (Locked -> native job retry).",
         "spiral/roadrunner-grpc": "Make gRPC service methods idempotent declaratively with #[Idempotent] via IdempotencyInterceptor bound in the 'grpc' scope by GrpcIdempotencyBootloader (Locked -> ABORTED status with a google.rpc.RetryInfo detail, key from metadata). Pulls google/protobuf + google/common-protos, which the gRPC middleware use directly.",
-        "spiral/roadrunner-bridge": "Runs the gRPC (and queue) dispatcher in a Spiral app: provides config/grpc.php with its `interceptors` list, the 'grpc' dispatcher scope and the invoker that IdempotencyInterceptorInterface plugs into. Required to actually serve gRPC; no type of it is imported here."
+        "spiral/roadrunner-bridge": "Runs the gRPC (and queue) dispatcher in a Spiral app: provides config/grpc.php with its `interceptors` list, the 'grpc' dispatcher scope and the invoker that IdempotencyInterceptor plugs into. Required to actually serve gRPC; no type of it is imported here."
     },
     "autoload": {
         "psr-4": {

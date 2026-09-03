@@ -127,8 +127,8 @@ $line($has('spiral/roadrunner-grpc') && $has('spiral/roadrunner-bridge'), 'gRPC'
 $line($has('cycle/database'), 'Cycle SQL', 'CycleLeaseConfig / CycleInboxConfig / CycleAtMostOnceConfig');
 $redisClient = match (true) {
     $has('predis/predis') => 'predis/predis found: bind \\Predis\\ClientInterface',
-    \extension_loaded('redis') => 'ext-redis found: bind RedisCommandsInterface to an adapter over \\Redis',
-    default => 'no Redis client found: bind RedisCommandsInterface to an adapter over the app\'s client, or install predis/predis',
+    \extension_loaded('redis') => 'ext-redis found: bind RedisCommands to an adapter over \\Redis',
+    default => 'no Redis client found: bind RedisCommands to an adapter over the app\'s client, or install predis/predis',
 };
 $line($has('predis/predis') || \extension_loaded('redis'), 'Redis lease', "RedisLeaseConfig (AtLeastOnce only) — {$redisClient}");
 

@@ -7,11 +7,11 @@ namespace Spiral\Idempotency\Pipeline\Middleware;
 use Spiral\Idempotency\Exception\ClassifiedException;
 use Spiral\Idempotency\Pipeline\ExecutionCall;
 use Spiral\Idempotency\Pipeline\ExecutionMiddleware;
-use Spiral\Idempotency\Pipeline\FailureClassifierInterface;
+use Spiral\Idempotency\Pipeline\FailureClassifier;
 
 /**
  * Execution middleware: catches a throwable from the operation, classifies it into a {@see FailureKind}
- * via the {@see FailureClassifierInterface}, and rethrows it wrapped in a {@see ClassifiedException} so
+ * via the {@see FailureClassifier}, and rethrows it wrapped in a {@see ClassifiedException} so
  * the driver handler can pick the terminal transition (complete(false) / abort / error). Successful
  * results pass through untouched.
  *
@@ -23,7 +23,7 @@ use Spiral\Idempotency\Pipeline\FailureClassifierInterface;
 final readonly class ClassifierMiddleware implements ExecutionMiddleware
 {
     public function __construct(
-        private FailureClassifierInterface $classifier,
+        private FailureClassifier $classifier,
     ) {}
 
     public function process(ExecutionCall $call, callable $next): mixed

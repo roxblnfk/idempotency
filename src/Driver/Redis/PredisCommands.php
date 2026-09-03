@@ -5,11 +5,11 @@ declare(strict_types=1);
 namespace Spiral\Idempotency\Driver\Redis;
 
 /**
- * {@see RedisCommandsInterface} over a predis client. Requires `predis/predis`.
+ * {@see RedisCommands} over a predis client. Requires `predis/predis`.
  *
  * @api
  */
-final readonly class PredisCommands implements RedisCommandsInterface
+final readonly class PredisCommands implements RedisCommands
 {
     public function __construct(
         private \Predis\ClientInterface $client,

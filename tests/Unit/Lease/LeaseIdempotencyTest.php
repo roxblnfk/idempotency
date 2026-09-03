@@ -13,17 +13,17 @@ use Spiral\Idempotency\Exception\LockedException;
 use Spiral\Idempotency\ExecuteOptions;
 use Spiral\Idempotency\IdempotencyContext;
 use Spiral\Idempotency\Internal\Lease\LeaseIdempotency;
-use Spiral\Idempotency\Internal\Lease\LeaseManager;
+use Spiral\Idempotency\Internal\Lease\DefaultLeaseManager;
 use Spiral\Idempotency\Internal\Lease\Storage\InMemoryLeaseStorage;
 use Spiral\Idempotency\Internal\Pipeline\DefaultFailureClassifier;
 use Spiral\Idempotency\Lease\AcquireResult;
 use Spiral\Idempotency\Lease\Acquired;
-use Spiral\Idempotency\Lease\LeaseManagerInterface;
-use Spiral\Idempotency\Lease\LeaseStorageInterface;
+use Spiral\Idempotency\Lease\LeaseManager;
+use Spiral\Idempotency\Lease\LeaseStorage;
 use Spiral\Idempotency\Lease\StoredEntry;
 use Spiral\Idempotency\Pipeline\Middleware\ClassifierMiddleware;
 use Spiral\Idempotency\Pipeline\Pipeline;
-use Spiral\Idempotency\ReplayableFailureInterface;
+use Spiral\Idempotency\ReplayableFailure;
 use Spiral\Idempotency\Tests\Support\MutableClock;
 use Spiral\Idempotency\Uncacheable;
 use Spiral\Serializer\Serializer\PhpSerializer;
@@ -35,7 +35,7 @@ use Testo\Test;
 /**
  * A domain failure that opts into faithful, exact-type replay by carrying a JSON-safe scalar payload.
  */
-final class PaymentDeclinedStub extends \DomainException implements ReplayableFailureInterface
+final class PaymentDeclinedStub extends \DomainException implements ReplayableFailure
 {
     public function __construct(
         public readonly int $declineCode,
@@ -63,7 +63,7 @@ final class LeaseIdempotencyTest
     {
         $clock ??= new MutableClock();
         $classifier ??= new DefaultFailureClassifier();
-        $manager = new LeaseManager(new InMemoryLeaseStorage($clock), $clock);
+        $manager = new DefaultLeaseManager(new InMemoryLeaseStorage($clock), $clock);
         $execution = new Pipeline(new ClassifierMiddleware($classifier));
 
         return new LeaseIdempotency($manager, $execution, lockTtl: 30, retentionTtl: 3600, classifier: $classifier);
@@ -109,14 +109,14 @@ final class LeaseIdempotencyTest
 
     public function forcedHeartbeatReachesTheLeaseManager(): void
     {
-        // Proves the context -> HeartbeatThrottle -> LeaseManager wiring: a forced renew() call from the
-        // operation bypasses the throttle and reaches LeaseManagerInterface::renew() on the real manager.
+        // Proves the context -> HeartbeatThrottle -> DefaultLeaseManager wiring: a forced renew() call from the
+        // operation bypasses the throttle and reaches LeaseManager::renew() on the real manager.
         $clock = new MutableClock();
-        $inner = new LeaseManager(new InMemoryLeaseStorage($clock), $clock);
-        $spy = new class($inner) implements LeaseManagerInterface {
+        $inner = new DefaultLeaseManager(new InMemoryLeaseStorage($clock), $clock);
+        $spy = new class($inner) implements LeaseManager {
             public int $renewCalls = 0;
 
-            public function __construct(private readonly LeaseManagerInterface $inner) {}
+            public function __construct(private readonly LeaseManager $inner) {}
 
             public function acquire(string $key, int $lockTtl): AcquireResult
             {
@@ -235,7 +235,7 @@ final class LeaseIdempotencyTest
         // Simulate a snapshot written by an earlier deploy: it carries a payload, but the failure class
         // no longer exists in this deploy. is_a() over a missing class is false → fall back, never fatal.
         $clock = new MutableClock();
-        $manager = new LeaseManager(new InMemoryLeaseStorage($clock), $clock);
+        $manager = new DefaultLeaseManager(new InMemoryLeaseStorage($clock), $clock);
 
         $acquired = $manager->acquire('k', 30);
         \assert($acquired instanceof Acquired);
@@ -345,9 +345,9 @@ final class LeaseIdempotencyTest
     /**
      * A lease manager that records the lock/retention TTLs it was asked to use, always granting the lease.
      */
-    private function capturingManager(): LeaseManagerInterface
+    private function capturingManager(): LeaseManager
     {
-        return new class implements LeaseManagerInterface {
+        return new class implements LeaseManager {
             public ?int $lockTtl = null;
             public ?int $retentionTtl = null;
 
@@ -426,13 +426,13 @@ final class LeaseIdempotencyTest
 
     /**
      * A driver whose storage grants acquire() but CAS-rejects every terminal transition — i.e. the lease
-     * was taken over while the operation ran. {@see LeaseManager} turns that into a {@see LeaseLostException}.
+     * was taken over while the operation ran. {@see DefaultLeaseManager} turns that into a {@see LeaseLostException}.
      */
     private function lostLeaseDriver(?\Psr\Log\LoggerInterface $logger = null): LeaseIdempotency
     {
         $clock = new MutableClock();
         $classifier = new DefaultFailureClassifier();
-        $storage = new class implements LeaseStorageInterface {
+        $storage = new class implements LeaseStorage {
             public function acquire(string $key, string $token, int $lockTtl): bool
             {
                 return true;
@@ -463,7 +463,7 @@ final class LeaseIdempotencyTest
                 return null;
             }
         };
-        $manager = new LeaseManager($storage, $clock);
+        $manager = new DefaultLeaseManager($storage, $clock);
         $execution = new Pipeline(new ClassifierMiddleware($classifier));
 
         return new LeaseIdempotency($manager, $execution, lockTtl: 30, retentionTtl: 3600, classifier: $classifier, logger: $logger);
@@ -472,7 +472,7 @@ final class LeaseIdempotencyTest
     public function lockedKeyThrowsLockedException(): never
     {
         $clock = new MutableClock();
-        $manager = new LeaseManager(new InMemoryLeaseStorage($clock), $clock);
+        $manager = new DefaultLeaseManager(new InMemoryLeaseStorage($clock), $clock);
         $driver = new LeaseIdempotency($manager, new Pipeline(), lockTtl: 30, retentionTtl: 3600);
 
         // Occupy the key with an in-flight PROCESSING lease held by "someone else".
@@ -491,7 +491,7 @@ final class LeaseIdempotencyTest
         // acquire() resolves to AcquireRetry — the loop must give up at the configured limit (3).
         $storage = $this->alwaysRetryStorage();
         $driver = new LeaseIdempotency(
-            new LeaseManager($storage, new MutableClock()),
+            new DefaultLeaseManager($storage, new MutableClock()),
             new Pipeline(),
         );
 
@@ -520,7 +520,7 @@ final class LeaseIdempotencyTest
         // and then run the operation, returning its value.
         $storage = $this->retryOnceThenAcquireStorage();
         $driver = new LeaseIdempotency(
-            new LeaseManager($storage, new MutableClock()),
+            new DefaultLeaseManager($storage, new MutableClock()),
             new Pipeline(),
         );
 
@@ -539,9 +539,9 @@ final class LeaseIdempotencyTest
      * A storage whose acquire() never succeeds and whose read() finds nothing — the manager maps that
      * to a perpetual {@see \Spiral\Idempotency\Lease\AcquireRetry}. Counts acquire() attempts.
      */
-    private function alwaysRetryStorage(): LeaseStorageInterface
+    private function alwaysRetryStorage(): LeaseStorage
     {
-        return new class implements LeaseStorageInterface {
+        return new class implements LeaseStorage {
             public int $acquireCalls = 0;
 
             public function acquire(string $key, string $token, int $lockTtl): bool
@@ -581,9 +581,9 @@ final class LeaseIdempotencyTest
      * A storage that reports AcquireRetry on the first acquire() (miss + vanished read) and then grants
      * the lease on the second — the positive exit of the retry loop.
      */
-    private function retryOnceThenAcquireStorage(): LeaseStorageInterface
+    private function retryOnceThenAcquireStorage(): LeaseStorage
     {
-        return new class implements LeaseStorageInterface {
+        return new class implements LeaseStorage {
             public int $acquireCalls = 0;
 
             public function acquire(string $key, string $token, int $lockTtl): bool

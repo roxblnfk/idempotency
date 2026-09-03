@@ -14,7 +14,7 @@ use Spiral\Idempotency\Driver\Cycle\CycleInboxConfig;
 use Spiral\Idempotency\Driver\Cycle\CycleLeaseConfig;
 use Spiral\Idempotency\Driver\Cycle\Internal\Schema\DefaultSchemaNaming;
 use Spiral\Idempotency\Driver\Cycle\Internal\Schema\IdempotencyTablesGenerator;
-use Spiral\Idempotency\Driver\Cycle\Schema\SchemaNamingInterface;
+use Spiral\Idempotency\Driver\Cycle\Schema\SchemaNaming;
 use Testo\Assert;
 use Testo\Codecov\Covers;
 
@@ -75,7 +75,7 @@ abstract class CycleSchemaTestCase extends DatabaseTestCase
 
     public function customNamingIsApplied(): void
     {
-        $naming = new class implements SchemaNamingInterface {
+        $naming = new class implements SchemaNaming {
             public function role(string $alias, StorageConfig $config): string
             {
                 return 'idem_' . $alias;
@@ -88,7 +88,7 @@ abstract class CycleSchemaTestCase extends DatabaseTestCase
         Assert::true($registry->hasEntity('idem_orders'));
     }
 
-    private function registry(IdempotencyConfig $config, ?SchemaNamingInterface $naming = null): Registry
+    private function registry(IdempotencyConfig $config, ?SchemaNaming $naming = null): Registry
     {
         $registry = new Registry($this->manager());
 

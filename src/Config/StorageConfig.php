@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Spiral\Idempotency\Config;
 
 use Spiral\Idempotency\Guarantee;
-use Spiral\Idempotency\StorageFactoryInterface;
+use Spiral\Idempotency\StorageFactory;
 
 /**
  * Typed, data-only configuration of a single storage alias. Each driver ships a concrete subclass
@@ -27,7 +27,7 @@ abstract class StorageConfig
     /**
      * Factory that turns this config into a driver.
      *
-     * @return class-string<StorageFactoryInterface>
+     * @return class-string<StorageFactory>
      */
     abstract public function factory(): string;
 }

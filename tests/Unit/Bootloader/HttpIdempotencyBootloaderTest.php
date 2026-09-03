@@ -11,10 +11,10 @@ use Spiral\Idempotency\Bootloader\HttpIdempotencyBootloader;
 use Spiral\Idempotency\Config\IdempotencyConfig;
 use Spiral\Idempotency\Exception\MisconfigurationException;
 use Spiral\Idempotency\IdempotencyRegistry;
+use Spiral\Idempotency\Interceptor\PipelineIdempotencyInterceptor;
 use Spiral\Idempotency\Interceptor\IdempotencyInterceptor;
-use Spiral\Idempotency\Interceptor\IdempotencyInterceptorInterface;
-use Spiral\Idempotency\Internal\Key\KeyResolver;
-use Spiral\Idempotency\KeyResolverInterface;
+use Spiral\Idempotency\Internal\Key\DefaultKeyResolver;
+use Spiral\Idempotency\KeyResolver;
 use Spiral\Interceptors\Context\CallContext;
 use Spiral\Interceptors\Context\CallContextInterface;
 use Spiral\Interceptors\HandlerInterface;
@@ -42,7 +42,7 @@ final class HttpIdempotencyBootloaderTest
     {
         $container = new Container();
         $container->bindSingleton(IdempotencyRegistry::class, new IdempotencyRegistry());
-        $container->bindSingleton(KeyResolverInterface::class, new KeyResolver());
+        $container->bindSingleton(KeyResolver::class, new DefaultKeyResolver());
         $container->bindSingleton(IdempotencyConfig::class, new IdempotencyConfig([
             'transports' => ['http' => []],
         ]));
@@ -84,10 +84,10 @@ final class HttpIdempotencyBootloaderTest
 
         $interceptor = $container->runScope(
             new Scope(name: 'http'),
-            static fn(IdempotencyInterceptorInterface $interceptor): object => $interceptor,
+            static fn(IdempotencyInterceptor $interceptor): object => $interceptor,
         );
 
-        Assert::instanceOf($interceptor, IdempotencyInterceptor::class);
+        Assert::instanceOf($interceptor, PipelineIdempotencyInterceptor::class);
     }
 
     public function interceptorIsASingletonOfTheHttpScope(): void
@@ -97,8 +97,8 @@ final class HttpIdempotencyBootloaderTest
         [$first, $second] = $container->runScope(
             new Scope(name: 'http'),
             static fn(ContainerInterface $scoped): array => [
-                $scoped->get(IdempotencyInterceptorInterface::class),
-                $scoped->get(IdempotencyInterceptorInterface::class),
+                $scoped->get(IdempotencyInterceptor::class),
+                $scoped->get(IdempotencyInterceptor::class),
             ],
         );
 
@@ -110,10 +110,10 @@ final class HttpIdempotencyBootloaderTest
         $container = $this->container();
 
         // Root resolution succeeds (a domain core built in root gets this proxy) ...
-        $proxy = $container->get(IdempotencyInterceptorInterface::class);
-        Assert::instanceOf($proxy, IdempotencyInterceptorInterface::class);
+        $proxy = $container->get(IdempotencyInterceptor::class);
+        Assert::instanceOf($proxy, IdempotencyInterceptor::class);
         // ... but it is not the real interceptor: it forwards per call.
-        Assert::false($proxy instanceof IdempotencyInterceptor);
+        Assert::false($proxy instanceof PipelineIdempotencyInterceptor);
 
         [$context, $handler] = $this->passthroughCall();
 
@@ -129,7 +129,7 @@ final class HttpIdempotencyBootloaderTest
     {
         $container = $this->container();
 
-        $proxy = $container->get(IdempotencyInterceptorInterface::class);
+        $proxy = $container->get(IdempotencyInterceptor::class);
         [$context, $handler] = $this->passthroughCall();
 
         Expect::exception(MisconfigurationException::class);

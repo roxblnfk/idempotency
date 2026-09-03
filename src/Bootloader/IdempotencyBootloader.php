@@ -11,15 +11,15 @@ use Spiral\Boot\Bootloader\Bootloader;
 use Spiral\Core\FactoryInterface;
 use Spiral\Idempotency\Config\IdempotencyConfig;
 use Spiral\Idempotency\IdempotencyRegistry;
-use Spiral\Idempotency\StorageFactoryInterface;
+use Spiral\Idempotency\StorageFactory;
 use Spiral\Idempotency\StorageServices;
-use Spiral\Idempotency\Internal\Key\KeyResolver;
+use Spiral\Idempotency\Internal\Key\DefaultKeyResolver;
 use Spiral\Idempotency\Internal\Lease\RandomTokenFactory;
 use Spiral\Idempotency\Internal\Pipeline\DefaultFailureClassifier;
 use Spiral\Idempotency\Internal\SystemClock;
-use Spiral\Idempotency\KeyResolverInterface;
-use Spiral\Idempotency\Lease\TokenFactoryInterface;
-use Spiral\Idempotency\Pipeline\FailureClassifierInterface;
+use Spiral\Idempotency\KeyResolver;
+use Spiral\Idempotency\Lease\TokenFactory;
+use Spiral\Idempotency\Pipeline\FailureClassifier;
 use Spiral\Serializer\Serializer\PhpSerializer;
 use Spiral\Serializer\SerializerInterface;
 
@@ -45,9 +45,9 @@ final class IdempotencyBootloader extends Bootloader
     {
         return [
             ClockInterface::class => SystemClock::class,
-            KeyResolverInterface::class => KeyResolver::class,
-            TokenFactoryInterface::class => RandomTokenFactory::class,
-            FailureClassifierInterface::class => DefaultFailureClassifier::class,
+            KeyResolver::class => DefaultKeyResolver::class,
+            TokenFactory::class => RandomTokenFactory::class,
+            FailureClassifier::class => DefaultFailureClassifier::class,
             IdempotencyRegistry::class => $this->initRegistry(...),
         ];
     }
@@ -65,8 +65,8 @@ final class IdempotencyBootloader extends Bootloader
         ContainerInterface $container,
         FactoryInterface $factory,
         ClockInterface $clock,
-        TokenFactoryInterface $tokens,
-        FailureClassifierInterface $classifier,
+        TokenFactory $tokens,
+        FailureClassifier $classifier,
     ): IdempotencyRegistry {
         // The lease/inbox drivers cache results by serialising them. The default {@see PhpSerializer}
         // round-trips through unserialize() on replay: writing a row into the table is object-injection
@@ -89,7 +89,7 @@ final class IdempotencyBootloader extends Bootloader
         $registry = new IdempotencyRegistry();
         foreach ($config->getStorages() as $alias => $storage) {
             $storageFactory = $factory->make($storage->factory());
-            \assert($storageFactory instanceof StorageFactoryInterface);
+            \assert($storageFactory instanceof StorageFactory);
             $registry->register($alias, $storageFactory->create($storage, $services), $storage->guarantee());
         }
 

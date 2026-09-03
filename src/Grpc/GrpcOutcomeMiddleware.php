@@ -10,7 +10,7 @@ use Spiral\Idempotency\Exception\LockedException;
 use Spiral\Idempotency\Exception\MissingKeyException;
 use Spiral\Idempotency\IdempotencyContext;
 use Spiral\Idempotency\Internal\Pipeline\DefaultFailureClassifier;
-use Spiral\Idempotency\Pipeline\FailureClassifierInterface;
+use Spiral\Idempotency\Pipeline\FailureClassifier;
 use Spiral\Idempotency\Pipeline\FailureKind;
 use Spiral\Idempotency\Pipeline\IdempotencyCall;
 use Spiral\Idempotency\Pipeline\ResolutionMiddleware;
@@ -54,7 +54,7 @@ use Spiral\RoadRunner\GRPC\StatusCode;
  * at all, so `Spiral\RoadRunner\GRPC\Server` reports it as a worker error instead of a status. Nothing to
  * configure: unlike HTTP (where the exception → response mapping is application-specific), a gRPC status
  * IS the wire outcome, so `code` + `message` + `details` is a complete, deterministic snapshot. For a
- * service that throws plain domain exceptions instead, bind a {@see DomainFailureMapperInterface}.
+ * service that throws plain domain exceptions instead, bind a {@see DomainFailureMapper}.
  *
  * Transient statuses (see {@see self::TRANSIENT}) are NOT cached: they are wrapped in {@see Uncacheable},
  * so the lease handler releases the key and a retry re-runs, exactly like a 5xx response over HTTP.
@@ -97,21 +97,21 @@ final readonly class GrpcOutcomeMiddleware implements ResolutionMiddleware
     /** @var \Closure(int): bool */
     private \Closure $cacheable;
 
-    private FailureClassifierInterface $classifier;
+    private FailureClassifier $classifier;
 
     /**
      * @param (\Closure(int): bool)|null $cacheable decides whether a thrown status may be cached, by status
      *        code; default: every code except {@see self::TRANSIENT}
-     * @param DomainFailureMapperInterface|null $failures maps a thrown domain failure that is not already a
+     * @param DomainFailureMapper|null $failures maps a thrown domain failure that is not already a
      *        gRPC status into one; null (default) rethrows such a failure untouched
-     * @param FailureClassifierInterface|null $classifier decides which throwables are Domain and may
+     * @param FailureClassifier|null $classifier decides which throwables are Domain and may
      *        therefore be snapshotted; defaults to {@see DefaultFailureClassifier}. Bind the same
      *        classifier the drivers use (the bootloader does) so both agree on what a domain failure is.
      */
     public function __construct(
         ?\Closure $cacheable = null,
-        private ?DomainFailureMapperInterface $failures = null,
-        ?FailureClassifierInterface $classifier = null,
+        private ?DomainFailureMapper $failures = null,
+        ?FailureClassifier $classifier = null,
     ) {
         $this->cacheable = $cacheable ?? static fn(int $code): bool => !\in_array($code, self::TRANSIENT, true);
         $this->classifier = $classifier ?? new DefaultFailureClassifier();

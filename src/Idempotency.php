@@ -14,7 +14,7 @@ namespace Spiral\Idempotency;
  *
  * @api
  */
-interface IdempotencyInterface
+interface Idempotency
 {
     /**
      * Run {@see $operation} idempotently under {@see $key}. On replay the cached result is returned
@@ -24,7 +24,7 @@ interface IdempotencyInterface
      * namespaced automatically. Operation-identity namespacing (so the same client key on two endpoints
      * does not collide) is applied only on the attribute/interceptor path via
      * {@see \Spiral\Idempotency\Attribute\Idempotent::$scope}. A direct caller that needs the same
-     * isolation composes it itself, e.g. via {@see KeyResolverInterface::resolve()} (available as a
+     * isolation composes it itself, e.g. via {@see KeyResolver::resolve()} (available as a
      * service) with an explicit parent key.
      *
      * @template T

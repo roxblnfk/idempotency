@@ -7,7 +7,7 @@ namespace Spiral\Idempotency\Driver\Redis;
 use Spiral\Idempotency\Config\StorageConfig;
 use Spiral\Idempotency\Driver\Redis\Internal\RedisLeaseFactory;
 use Spiral\Idempotency\Guarantee;
-use Spiral\Idempotency\StorageFactoryInterface;
+use Spiral\Idempotency\StorageFactory;
 
 /**
  * Data-only config for an AtLeastOnce lease over a Redis/Valkey server.
@@ -18,7 +18,7 @@ use Spiral\Idempotency\StorageFactoryInterface;
  * DB transaction over the side-effect and stays on the Cycle driver.
  *
  * No connection parameters live here: {@see RedisLeaseFactory} takes the connection from the container —
- * a {@see RedisCommandsInterface} binding (an adapter over any Redis client), or a `\Predis\ClientInterface`
+ * a {@see RedisCommands} binding (an adapter over any Redis client), or a `\Predis\ClientInterface`
  * binding wrapped in {@see PredisCommands} — mirroring how {@see \Spiral\Idempotency\Driver\Cycle\Internal\CycleLeaseFactory}
  * injects the DBAL provider.
  *
@@ -50,7 +50,7 @@ final class RedisLeaseConfig extends StorageConfig
     }
 
     /**
-     * @return class-string<StorageFactoryInterface>
+     * @return class-string<StorageFactory>
      */
     public function factory(): string
     {

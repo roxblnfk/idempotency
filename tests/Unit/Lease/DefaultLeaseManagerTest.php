@@ -8,8 +8,8 @@ use Spiral\Idempotency\Exception\LeaseLostException;
 use Spiral\Idempotency\Lease\Acquired;
 use Spiral\Idempotency\Lease\AcquireRetry;
 use Spiral\Idempotency\Lease\AlreadyCompleted;
-use Spiral\Idempotency\Internal\Lease\LeaseManager;
-use Spiral\Idempotency\Lease\LeaseStorageInterface;
+use Spiral\Idempotency\Internal\Lease\DefaultLeaseManager;
+use Spiral\Idempotency\Lease\LeaseStorage;
 use Spiral\Idempotency\Lease\Locked;
 use Spiral\Idempotency\Internal\Lease\Storage\InMemoryLeaseStorage;
 use Spiral\Idempotency\Lease\StoredEntry;
@@ -20,12 +20,12 @@ use Testo\Expect;
 use Testo\Test;
 
 #[Test]
-#[Covers(LeaseManager::class)]
-final class LeaseManagerTest
+#[Covers(DefaultLeaseManager::class)]
+final class DefaultLeaseManagerTest
 {
-    private function manager(MutableClock $clock): LeaseManager
+    private function manager(MutableClock $clock): DefaultLeaseManager
     {
-        return new LeaseManager(new InMemoryLeaseStorage($clock), $clock);
+        return new DefaultLeaseManager(new InMemoryLeaseStorage($clock), $clock);
     }
 
     public function acquireOnFreeKeyReturnsAcquired(): void
@@ -137,7 +137,7 @@ final class LeaseManagerTest
     public function acquireRetryWhenRecordVanishesInConflictBranch(): void
     {
         // Storage that reports a conflict but then has nothing to read — the gap of spec §3.2.1.
-        $storage = new class implements LeaseStorageInterface {
+        $storage = new class implements LeaseStorage {
             public function acquire(string $key, string $token, int $lockTtl): bool
             {
                 return false;
@@ -169,7 +169,7 @@ final class LeaseManagerTest
             }
         };
 
-        $manager = new LeaseManager($storage, new MutableClock());
+        $manager = new DefaultLeaseManager($storage, new MutableClock());
 
         $result = $manager->acquire('k', 30);
 

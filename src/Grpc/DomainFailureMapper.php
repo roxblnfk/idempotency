@@ -25,7 +25,7 @@ use Spiral\RoadRunner\GRPC\Exception\GRPCExceptionInterface;
  *
  * @api
  */
-interface DomainFailureMapperInterface
+interface DomainFailureMapper
 {
     /**
      * @param \Throwable $failure a failure classified as Domain

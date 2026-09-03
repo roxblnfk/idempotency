@@ -10,7 +10,7 @@ namespace Spiral\Idempotency;
  *
  * @api
  */
-interface GuaranteeProviderInterface
+interface GuaranteeProvider
 {
     public function guarantee(): Guarantee;
 }

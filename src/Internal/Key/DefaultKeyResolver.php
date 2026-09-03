@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Spiral\Idempotency\Internal\Key;
 
 use Spiral\Idempotency\Exception\MissingKeyException;
-use Spiral\Idempotency\KeyResolverInterface;
+use Spiral\Idempotency\KeyResolver;
 
 /**
  * Default resolver: trims the raw material, composes the hierarchy `parentKey + stepId`
@@ -15,9 +15,9 @@ use Spiral\Idempotency\KeyResolverInterface;
  * Determinism is a caller contract — we cannot detect random()/now() at runtime, so the
  * only enforceable rejection is empty/blank material.
  *
- * @internal Bound to {@see KeyResolverInterface} by the bootloader; not part of the public API.
+ * @internal Bound to {@see KeyResolver} by the bootloader; not part of the public API.
  */
-final class KeyResolver implements KeyResolverInterface
+final class DefaultKeyResolver implements KeyResolver
 {
     /**
      * @param non-empty-string $separator hierarchy separator for `parentKey + stepId`
