@@ -7,13 +7,13 @@ namespace Spiral\Idempotency\Lease;
 use Spiral\Idempotency\Exception\LeaseLostException;
 
 /**
- * The lease state-machine over a {@see LeaseStorageInterface}. It gives bare
+ * The lease state-machine over a {@see LeaseStorage}. It gives bare
  * transition primitives — it knows nothing about Domain/Bug/Failure categories, retry or HTTP codes
  * (those live in pipeline middleware).
  *
  * @api
  */
-interface LeaseManagerInterface
+interface LeaseManager
 {
     /**
      * Atomic conditional acquire. Generates a fencing token internally and returns a discriminated

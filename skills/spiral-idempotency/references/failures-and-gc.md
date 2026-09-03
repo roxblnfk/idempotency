@@ -3,23 +3,23 @@
 ## Failure classification
 
 An exception thrown by the operation is classified into one of three kinds — deterministic
-outcome and "will a retry help" are independent axes. Bind `FailureClassifierInterface` to
+outcome and "will a retry help" are independent axes. Bind `FailureClassifier` to
 customize the mapping.
 
 | Kind | Default mapping | Lease reaction |
 |---|---|---|
 | **Domain** | any other `\Exception` | Cached as a valid negative outcome, replayed on retry |
-| **Infrastructure** | `\Error`, or `\Exception` implementing `RetryableInterface` | Key released; the transport/client retries |
+| **Infrastructure** | `\Error`, or `\Exception` implementing `Retryable` | Key released; the transport/client retries |
 | **Bug** | only via explicit config: `DefaultFailureClassifier(bugExceptions: [...])` | Key released; no re-enqueue — report and fix |
 
 ## Exact-type failure replay
 
 A cached domain failure replays as `CachedDomainFailureException` carrying the original class name
-and message. For an **exact-type** replay, implement `ReplayableFailureInterface` on the domain
+and message. For an **exact-type** replay, implement `ReplayableFailure` on the domain
 exception:
 
 ```php
-final class PaymentDeclined extends \DomainException implements ReplayableFailureInterface
+final class PaymentDeclined extends \DomainException implements ReplayableFailure
 {
     public function toReplayPayload(): array
     {
@@ -41,13 +41,13 @@ by different code — over HTTP that means a **different status code**, unless y
 
 1. **Return an error response** instead of throwing — snapshotted and replayed byte-identically,
    status included. Nothing to configure.
-2. **Bind `Http\DomainFailureRendererInterface`** — keeps the throwing style:
+2. **Bind `Http\DomainFailureRenderer`** — keeps the throwing style:
    `HttpOutcomeMiddleware` renders Domain-classified throwables into a response *inside* the
    operation, so the snapshot (status included) is cached and the replay carries the
    `Idempotency-Replay` header too:
 
    ```php
-   final class DeclineRenderer implements DomainFailureRendererInterface
+   final class DeclineRenderer implements DomainFailureRenderer
    {
        public function __construct(private ResponseFactoryInterface $responses) {}
 
@@ -61,7 +61,7 @@ by different code — over HTTP that means a **different status code**, unless y
    }
    ```
 
-   Bind it in a bootloader (`DomainFailureRendererInterface::class => DeclineRenderer::class`).
+   Bind it in a bootloader (`DomainFailureRenderer::class => DeclineRenderer::class`).
    Only `FailureKind::Domain` failures reach the renderer; Infrastructure and Bug ones stay
    exceptions (key released, retry re-runs). The `cacheable` predicate still applies — a rendered
    5xx is not cached either. Rows written *before* the renderer was bound keep replaying as a throw.
@@ -96,6 +96,6 @@ TTLs, an expired lease simply vanishes.
   own `SerializerInterface` to switch, e.g. to JSON. The default `PhpSerializer` runs
   `unserialize()` on blobs read back from the tables — the table/keyspace is the trust boundary;
   with multiple writers, bind a JSON serializer and keep results JSON-safe.
-- **Classifier** — bind `FailureClassifierInterface`.
-- **Key policy** — bind `KeyResolverInterface` (normalization, hashing, hierarchy composition).
-- **Schema** — ORM role names via `SchemaNamingInterface`; table names live in the storage configs.
+- **Classifier** — bind `FailureClassifier`.
+- **Key policy** — bind `KeyResolver` (normalization, hashing, hierarchy composition).
+- **Schema** — ORM role names via `SchemaNaming`; table names live in the storage configs.

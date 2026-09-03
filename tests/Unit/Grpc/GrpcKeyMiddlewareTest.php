@@ -7,7 +7,7 @@ namespace Spiral\Idempotency\Tests\Unit\Grpc;
 use Spiral\Idempotency\Exception\MissingKeyException;
 use Spiral\Idempotency\ExecuteOptions;
 use Spiral\Idempotency\Grpc\GrpcKeyMiddleware;
-use Spiral\Idempotency\Internal\Key\KeyResolver;
+use Spiral\Idempotency\Internal\Key\DefaultKeyResolver;
 use Spiral\Idempotency\Pipeline\IdempotencyCall;
 use Spiral\Interceptors\Context\CallContext;
 use Spiral\Interceptors\Context\Target;
@@ -84,7 +84,7 @@ final class GrpcKeyMiddlewareTest
 
     public function passesThroughWhenKeyAlreadyResolved(): void
     {
-        $middleware = new GrpcKeyMiddleware(new KeyResolver());
+        $middleware = new GrpcKeyMiddleware(new DefaultKeyResolver());
         $call = $this->call($this->grpcContext(['idempotency-key' => ['abc-1']]), key: 'existing');
 
         $received = null;
@@ -99,7 +99,7 @@ final class GrpcKeyMiddlewareTest
 
     public function passesThroughWhenContextNotGrpc(): void
     {
-        $middleware = new GrpcKeyMiddleware(new KeyResolver());
+        $middleware = new GrpcKeyMiddleware(new DefaultKeyResolver());
         $call = $this->call('not-a-context');
 
         $received = null;
@@ -114,7 +114,7 @@ final class GrpcKeyMiddlewareTest
 
     public function extractsKeyFromMetadata(): void
     {
-        $middleware = new GrpcKeyMiddleware(new KeyResolver());
+        $middleware = new GrpcKeyMiddleware(new DefaultKeyResolver());
         $call = $this->call(
             $this->grpcContext(['idempotency-key' => ['abc-1']]),
             keyScope: 'Op::run',
@@ -127,12 +127,12 @@ final class GrpcKeyMiddlewareTest
         });
 
         Assert::notNull($received);
-        Assert::same($received->key, (new KeyResolver())->resolve('abc-1', 'Op::run'));
+        Assert::same($received->key, (new DefaultKeyResolver())->resolve('abc-1', 'Op::run'));
     }
 
     public function matchesMetadataKeyCaseInsensitively(): void
     {
-        $middleware = new GrpcKeyMiddleware(new KeyResolver());
+        $middleware = new GrpcKeyMiddleware(new DefaultKeyResolver());
         $call = $this->call($this->grpcContext(['Idempotency-Key' => ['abc-2']]));
 
         $received = null;
@@ -142,12 +142,12 @@ final class GrpcKeyMiddlewareTest
         });
 
         Assert::notNull($received);
-        Assert::same($received->key, (new KeyResolver())->resolve('abc-2', null));
+        Assert::same($received->key, (new DefaultKeyResolver())->resolve('abc-2', null));
     }
 
     public function customMetadataKey(): void
     {
-        $middleware = new GrpcKeyMiddleware(new KeyResolver(), 'x-dedup');
+        $middleware = new GrpcKeyMiddleware(new DefaultKeyResolver(), 'x-dedup');
         $call = $this->call($this->grpcContext(['x-dedup' => ['zzz']]));
 
         $received = null;
@@ -157,12 +157,12 @@ final class GrpcKeyMiddlewareTest
         });
 
         Assert::notNull($received);
-        Assert::same($received->key, (new KeyResolver())->resolve('zzz', null));
+        Assert::same($received->key, (new DefaultKeyResolver())->resolve('zzz', null));
     }
 
     public function missingMetadataThrowsMissingKey(): void
     {
-        $middleware = new GrpcKeyMiddleware(new KeyResolver());
+        $middleware = new GrpcKeyMiddleware(new DefaultKeyResolver());
         $call = $this->call($this->grpcContext([]));
 
         Expect::exception(MissingKeyException::class);
@@ -172,7 +172,7 @@ final class GrpcKeyMiddlewareTest
 
     public function blankMetadataThrowsMissingKey(): void
     {
-        $middleware = new GrpcKeyMiddleware(new KeyResolver());
+        $middleware = new GrpcKeyMiddleware(new DefaultKeyResolver());
         $call = $this->call($this->grpcContext(['idempotency-key' => ['']]));
 
         Expect::exception(MissingKeyException::class);

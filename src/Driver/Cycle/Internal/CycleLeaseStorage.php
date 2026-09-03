@@ -10,7 +10,7 @@ use Cycle\Database\Query\OnConflict;
 use Cycle\Database\Query\QueryParameters;
 use Psr\Clock\ClockInterface;
 use Spiral\Idempotency\Lease\LeaseState;
-use Spiral\Idempotency\Lease\LeaseStorageInterface;
+use Spiral\Idempotency\Lease\LeaseStorage;
 use Spiral\Idempotency\Lease\StoredEntry;
 
 /**
@@ -24,9 +24,9 @@ use Spiral\Idempotency\Lease\StoredEntry;
  * and portable; the column is still indexable for GC. Timestamp columns follow the
  * AIP-142 `*_time` naming convention.
  *
- * @internal Bound to {@see LeaseStorageInterface} per alias by the bootloader; not public API.
+ * @internal Bound to {@see LeaseStorage} per alias by the bootloader; not public API.
  */
-final readonly class CycleLeaseStorage implements LeaseStorageInterface
+final readonly class CycleLeaseStorage implements LeaseStorage
 {
     /**
      * @param non-empty-string $table

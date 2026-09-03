@@ -5,14 +5,14 @@ declare(strict_types=1);
 namespace Spiral\Idempotency\Queue;
 
 use Spiral\Idempotency\Exception\MissingKeyException;
-use Spiral\Idempotency\KeyResolverInterface;
+use Spiral\Idempotency\KeyResolver;
 use Spiral\Idempotency\Pipeline\IdempotencyCall;
 use Spiral\Idempotency\Pipeline\ResolutionMiddleware;
 use Spiral\Interceptors\Context\CallContextInterface;
 
 /**
  * Queue resolution middleware: extracts the raw key from the job headers carried in the call context
- * (the `Idempotency-Key` header) and normalizes it via the shared {@see KeyResolverInterface}. The
+ * (the `Idempotency-Key` header) and normalizes it via the shared {@see KeyResolver}. The
  * queue analog of {@see \Spiral\Idempotency\Http\HttpKeyMiddleware}.
  *
  * On the consume side, Spiral's queue `Handler` builds the {@see CallContextInterface} as
@@ -36,7 +36,7 @@ final readonly class QueueKeyMiddleware implements ResolutionMiddleware
      * @param non-empty-string $header job header carrying the key
      */
     public function __construct(
-        private KeyResolverInterface $resolver,
+        private KeyResolver $resolver,
         private string $header = 'Idempotency-Key',
     ) {}
 

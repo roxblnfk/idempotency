@@ -10,8 +10,8 @@ use Psr\Container\ContainerInterface;
 use Spiral\Idempotency\Config\StorageConfig;
 use Spiral\Idempotency\Driver\Cycle\CycleAtMostOnceConfig;
 use Spiral\Idempotency\Exception\MisconfigurationException;
-use Spiral\Idempotency\IdempotencyInterface;
-use Spiral\Idempotency\StorageFactoryInterface;
+use Spiral\Idempotency\Idempotency;
+use Spiral\Idempotency\StorageFactory;
 use Spiral\Idempotency\StorageServices;
 
 /**
@@ -26,13 +26,13 @@ use Spiral\Idempotency\StorageServices;
  *
  * @internal Resolved from {@see CycleAtMostOnceConfig::factory()} via the container; not part of the public API.
  */
-final readonly class CycleAtMostOnceFactory implements StorageFactoryInterface
+final readonly class CycleAtMostOnceFactory implements StorageFactory
 {
     public function __construct(
         private ContainerInterface $container,
     ) {}
 
-    public function create(StorageConfig $config, StorageServices $services): IdempotencyInterface
+    public function create(StorageConfig $config, StorageServices $services): Idempotency
     {
         if (!$config instanceof CycleAtMostOnceConfig) {
             throw new MisconfigurationException(

@@ -5,40 +5,40 @@ declare(strict_types=1);
 namespace Spiral\Idempotency\Tests\Unit\Key;
 
 use Spiral\Idempotency\Exception\MissingKeyException;
-use Spiral\Idempotency\Internal\Key\KeyResolver;
+use Spiral\Idempotency\Internal\Key\DefaultKeyResolver;
 use Testo\Assert;
 use Testo\Codecov\Covers;
 use Testo\Expect;
 use Testo\Test;
 
 #[Test]
-#[Covers(KeyResolver::class)]
-final class KeyResolverTest
+#[Covers(DefaultKeyResolver::class)]
+final class DefaultKeyResolverTest
 {
     public function trimsRawMaterial(): void
     {
-        $resolver = new KeyResolver();
+        $resolver = new DefaultKeyResolver();
 
         Assert::same($resolver->resolve('  order-1  '), 'order-1');
     }
 
     public function composesHierarchyWithSeparator(): void
     {
-        $resolver = new KeyResolver(separator: ':');
+        $resolver = new DefaultKeyResolver(separator: ':');
 
         Assert::same($resolver->resolve('step', 'parent'), 'parent:step');
     }
 
     public function isDeterministicForSameInput(): void
     {
-        $resolver = new KeyResolver();
+        $resolver = new DefaultKeyResolver();
 
         Assert::same($resolver->resolve('abc', 'p'), $resolver->resolve('abc', 'p'));
     }
 
     public function hashesWhenComposedKeyExceedsMaxLength(): void
     {
-        $resolver = new KeyResolver(maxLength: 8, hashAlgo: 'sha256');
+        $resolver = new DefaultKeyResolver(maxLength: 8, hashAlgo: 'sha256');
 
         $key = $resolver->resolve('this-is-a-long-key');
 
@@ -48,7 +48,7 @@ final class KeyResolverTest
 
     public function hashesAlwaysWhenConfigured(): void
     {
-        $resolver = new KeyResolver(hashAlways: true);
+        $resolver = new DefaultKeyResolver(hashAlways: true);
 
         Assert::same($resolver->resolve('short'), \hash('sha256', 'short'));
     }
@@ -57,13 +57,13 @@ final class KeyResolverTest
     {
         Expect::exception(MissingKeyException::class);
 
-        (new KeyResolver())->resolve(null);
+        (new DefaultKeyResolver())->resolve(null);
     }
 
     public function rejectsBlankMaterial(): never
     {
         Expect::exception(MissingKeyException::class);
 
-        (new KeyResolver())->resolve('   ');
+        (new DefaultKeyResolver())->resolve('   ');
     }
 }

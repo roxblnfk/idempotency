@@ -20,7 +20,7 @@ namespace Spiral\Idempotency\Lease;
  *
  * @api
  */
-interface LeaseStorageInterface
+interface LeaseStorage
 {
     /**
      * Atomic conditional insert of a fresh PROCESSING record.
@@ -61,7 +61,7 @@ interface LeaseStorageInterface
     /**
      * CAS by token: extend the PROCESSING lock TTL.
      *
-     * Backs {@see LeaseManagerInterface::renew()}, which the default pipeline does not call yet (it is
+     * Backs {@see LeaseManager::renew()}, which the default pipeline does not call yet (it is
      * reserved for a lock-renewal middleware in the backlog). Implemented and covered per dialect so the
      * primitive is ready.
      *

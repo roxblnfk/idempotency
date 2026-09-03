@@ -14,14 +14,14 @@ use Spiral\Idempotency\Grpc\GrpcKeyMiddleware;
 use Spiral\Idempotency\Grpc\GrpcOutcomeMiddleware;
 use Spiral\Idempotency\Guarantee;
 use Spiral\Idempotency\IdempotencyContext;
-use Spiral\Idempotency\IdempotencyInterface;
+use Spiral\Idempotency\Idempotency;
 use Spiral\Idempotency\IdempotencyRegistry;
-use Spiral\Idempotency\Interceptor\IdempotencyInterceptor;
-use Spiral\Idempotency\Internal\Key\KeyResolver;
+use Spiral\Idempotency\Interceptor\PipelineIdempotencyInterceptor;
+use Spiral\Idempotency\Internal\Key\DefaultKeyResolver;
 use Spiral\Idempotency\Internal\Lease\LeaseIdempotency;
-use Spiral\Idempotency\Internal\Lease\LeaseManager;
+use Spiral\Idempotency\Internal\Lease\DefaultLeaseManager;
 use Spiral\Idempotency\Internal\Lease\Storage\InMemoryLeaseStorage;
-use Spiral\Idempotency\KeyResolverInterface;
+use Spiral\Idempotency\KeyResolver;
 use Spiral\Idempotency\Pipeline\Pipeline;
 use Spiral\Idempotency\Tests\Support\MutableClock;
 use Spiral\Interceptors\Handler\AutowireHandler;
@@ -59,7 +59,7 @@ final class PingService implements ServiceInterface
  * A fire-once (AtMostOnce-shaped) driver: runs the operation the first time and answers `null` for every
  * duplicate — the shape that has no room in gRPC, where the invoker demands a Message.
  */
-final class FireOnceDriverStub implements IdempotencyInterface
+final class FireOnceDriverStub implements Idempotency
 {
     /** @var array<string, true> */
     private array $seen = [];
@@ -96,7 +96,7 @@ final class FireOnceDriverStub implements IdempotencyInterface
  * context can catch a change in any of those, so drive the real {@see Invoker} here.
  */
 #[Test]
-#[Covers(IdempotencyInterceptor::class)]
+#[Covers(PipelineIdempotencyInterceptor::class)]
 #[Covers(GrpcKeyMiddleware::class)]
 #[Covers(GrpcOutcomeMiddleware::class)]
 final class BridgeIntegrationTest
@@ -106,9 +106,9 @@ final class BridgeIntegrationTest
      * interceptors resolved from the container, wrapped around an {@see AutowireHandler}, handed to the
      * bridge's {@see Invoker}.
      */
-    private function invoker(Container $container, IdempotencyInterface $driver, Guarantee $guarantee): Invoker
+    private function invoker(Container $container, Idempotency $driver, Guarantee $guarantee): Invoker
     {
-        $container->bindSingleton(KeyResolverInterface::class, new KeyResolver());
+        $container->bindSingleton(KeyResolver::class, new DefaultKeyResolver());
 
         $registry = new IdempotencyRegistry();
         $registry->register('grpc', $driver, $guarantee);
@@ -117,9 +117,9 @@ final class BridgeIntegrationTest
             'transports' => ['grpc' => [GrpcOutcomeMiddleware::class, GrpcKeyMiddleware::class]],
         ]);
 
-        $interceptor = new IdempotencyInterceptor(
+        $interceptor = new PipelineIdempotencyInterceptor(
             $registry,
-            new KeyResolver(),
+            new DefaultKeyResolver(),
             $container,
             $config,
             transport: 'grpc',
@@ -138,7 +138,7 @@ final class BridgeIntegrationTest
         $clock = new MutableClock();
 
         return new LeaseIdempotency(
-            new LeaseManager(new InMemoryLeaseStorage($clock), $clock),
+            new DefaultLeaseManager(new InMemoryLeaseStorage($clock), $clock),
             new Pipeline(),
             lockTtl: 30,
             retentionTtl: 3600,

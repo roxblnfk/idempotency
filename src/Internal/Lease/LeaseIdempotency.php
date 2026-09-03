@@ -13,19 +13,19 @@ use Spiral\Idempotency\Exception\LeaseLostException;
 use Spiral\Idempotency\Exception\LockedException;
 use Spiral\Idempotency\ExecuteOptions;
 use Spiral\Idempotency\Guarantee;
-use Spiral\Idempotency\GuaranteeProviderInterface;
-use Spiral\Idempotency\IdempotencyInterface;
+use Spiral\Idempotency\GuaranteeProvider;
+use Spiral\Idempotency\Idempotency;
 use Spiral\Idempotency\Internal\Pipeline\DefaultFailureClassifier;
 use Spiral\Idempotency\Internal\SystemClock;
 use Spiral\Idempotency\Lease\Acquired;
 use Spiral\Idempotency\Lease\AlreadyCompleted;
-use Spiral\Idempotency\Lease\LeaseManagerInterface;
+use Spiral\Idempotency\Lease\LeaseManager;
 use Spiral\Idempotency\Lease\Locked;
 use Spiral\Idempotency\Pipeline\ExecutionCall;
-use Spiral\Idempotency\Pipeline\FailureClassifierInterface;
+use Spiral\Idempotency\Pipeline\FailureClassifier;
 use Spiral\Idempotency\Pipeline\FailureKind;
 use Spiral\Idempotency\Pipeline\Pipeline;
-use Spiral\Idempotency\ReplayableFailureInterface;
+use Spiral\Idempotency\ReplayableFailure;
 use Spiral\Idempotency\Uncacheable;
 use Spiral\Serializer\Serializer\PhpSerializer;
 use Spiral\Serializer\SerializerInterface;
@@ -46,16 +46,16 @@ use Spiral\Serializer\SerializerInterface;
  * downgrades the {@see LeaseLostException} raised by the manager to a logger warning (via {@see terminal()})
  * and still returns the value / rethrows the original throwable — it only skips caching the outcome, since
  * the record now belongs to the new owner. The strict "throw on lost lease" contract stays in the
- * {@see \Spiral\Idempotency\Lease\LeaseManagerInterface} for the future renewal middleware. Until that
+ * {@see \Spiral\Idempotency\Lease\LeaseManager} for the future renewal middleware. Until that
  * middleware exists, a handler MUST finish within its lock TTL; a lost lease means the TTL is too short.
  *
- * @internal Built per storage alias by the factory; consumers resolve {@see IdempotencyInterface}
+ * @internal Built per storage alias by the factory; consumers resolve {@see Idempotency}
  *           from the {@see \Spiral\Idempotency\IdempotencyRegistry}. Not part of the public API.
  */
-final readonly class LeaseIdempotency implements IdempotencyInterface, GuaranteeProviderInterface
+final readonly class LeaseIdempotency implements Idempotency, GuaranteeProvider
 {
     private SerializerInterface $serializer;
-    private FailureClassifierInterface $classifier;
+    private FailureClassifier $classifier;
     private ClockInterface $clock;
 
     /**
@@ -67,12 +67,12 @@ final readonly class LeaseIdempotency implements IdempotencyInterface, Guarantee
      *        again — throttles {@see \Spiral\Idempotency\IdempotencyContext::renew()} (see {@see HeartbeatThrottle})
      */
     public function __construct(
-        private LeaseManagerInterface $manager,
+        private LeaseManager $manager,
         private Pipeline $execution,
         private int $lockTtl = 30,
         private int $retentionTtl = 86400,
         ?SerializerInterface $serializer = null,
-        ?FailureClassifierInterface $classifier = null,
+        ?FailureClassifier $classifier = null,
         private int $acquireRetryLimit = 3,
         private ?LoggerInterface $logger = null,
         ?ClockInterface $clock = null,
@@ -234,9 +234,9 @@ final readonly class LeaseIdempotency implements IdempotencyInterface, Guarantee
         if (\is_array($decoded) && isset($decoded['class'], $decoded['message'])) {
             $class = (string) $decoded['class'];
 
-            // Faithful replay: the original exception opted in via ReplayableFailureInterface AND its
+            // Faithful replay: the original exception opted in via ReplayableFailure AND its
             // class still exists (is_a() with a vanished class returns false — deploy-safe, no fatal).
-            if (isset($decoded['payload']) && \is_a($class, ReplayableFailureInterface::class, true)) {
+            if (isset($decoded['payload']) && \is_a($class, ReplayableFailure::class, true)) {
                 throw $class::fromReplayPayload((array) $decoded['payload']);
             }
 
@@ -259,13 +259,13 @@ final readonly class LeaseIdempotency implements IdempotencyInterface, Guarantee
     /**
      * Lightweight, always-serializable snapshot of a domain failure (class + message), avoiding the
      * fragility of serializing the throwable object itself (its trace may capture closures). When the
-     * failure opts into {@see ReplayableFailureInterface}, its JSON-safe payload is stored too, so
+     * failure opts into {@see ReplayableFailure}, its JSON-safe payload is stored too, so
      * {@see replay()} can rethrow the exact same type instead of a {@see CachedDomainFailureException}.
      */
     private function encodeFailure(\Throwable $e): string
     {
         $snapshot = ['class' => $e::class, 'message' => $e->getMessage()];
-        if ($e instanceof ReplayableFailureInterface) {
+        if ($e instanceof ReplayableFailure) {
             $snapshot['payload'] = $e->toReplayPayload();
         }
 

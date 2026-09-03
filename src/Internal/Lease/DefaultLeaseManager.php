@@ -10,25 +10,25 @@ use Spiral\Idempotency\Lease\Acquired;
 use Spiral\Idempotency\Lease\AcquireResult;
 use Spiral\Idempotency\Lease\AcquireRetry;
 use Spiral\Idempotency\Lease\AlreadyCompleted;
-use Spiral\Idempotency\Lease\LeaseManagerInterface;
+use Spiral\Idempotency\Lease\LeaseManager;
 use Spiral\Idempotency\Lease\LeaseState;
-use Spiral\Idempotency\Lease\LeaseStorageInterface;
+use Spiral\Idempotency\Lease\LeaseStorage;
 use Spiral\Idempotency\Lease\Locked;
-use Spiral\Idempotency\Lease\TokenFactoryInterface;
+use Spiral\Idempotency\Lease\TokenFactory;
 
 /**
- * Default {@see LeaseManagerInterface}: drives the lease state machine over a
- * {@see LeaseStorageInterface}, mapping the atomic conditional insert and the conflict-branch read
+ * Default {@see LeaseManager}: drives the lease state machine over a
+ * {@see LeaseStorage}, mapping the atomic conditional insert and the conflict-branch read
  * into the discriminated {@see AcquireResult}.
  *
- * @internal Bound to {@see LeaseManagerInterface} by the bootloader; not part of the public API.
+ * @internal Bound to {@see LeaseManager} by the bootloader; not part of the public API.
  */
-final class LeaseManager implements LeaseManagerInterface
+final class DefaultLeaseManager implements LeaseManager
 {
     public function __construct(
-        private readonly LeaseStorageInterface $storage,
+        private readonly LeaseStorage $storage,
         private readonly ClockInterface $clock,
-        private readonly TokenFactoryInterface $tokens = new RandomTokenFactory(),
+        private readonly TokenFactory $tokens = new RandomTokenFactory(),
     ) {}
 
     public function acquire(string $key, int $lockTtl): AcquireResult

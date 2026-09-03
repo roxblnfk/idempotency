@@ -17,7 +17,7 @@ use Spiral\Idempotency\Config\StorageConfig;
  *
  * @api
  */
-interface SchemaNamingInterface
+interface SchemaNaming
 {
     /**
      * @param non-empty-string $alias storage alias from config

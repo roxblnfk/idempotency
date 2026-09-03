@@ -8,28 +8,28 @@ use Cycle\Database\DatabaseProviderInterface;
 use Spiral\Idempotency\Config\StorageConfig;
 use Spiral\Idempotency\Driver\Cycle\CycleLeaseConfig;
 use Spiral\Idempotency\Exception\MisconfigurationException;
-use Spiral\Idempotency\IdempotencyInterface;
+use Spiral\Idempotency\Idempotency;
 use Spiral\Idempotency\Internal\Lease\LeaseIdempotency;
-use Spiral\Idempotency\Internal\Lease\LeaseManager;
+use Spiral\Idempotency\Internal\Lease\DefaultLeaseManager;
 use Spiral\Idempotency\Pipeline\Middleware\ClassifierMiddleware;
 use Spiral\Idempotency\Pipeline\Middleware\FiberRenewalMiddleware;
 use Spiral\Idempotency\Pipeline\Pipeline;
-use Spiral\Idempotency\StorageFactoryInterface;
+use Spiral\Idempotency\StorageFactory;
 use Spiral\Idempotency\StorageServices;
 
 /**
- * Builds the lease engine ({@see LeaseManager} + {@see LeaseIdempotency}) over a
+ * Builds the lease engine ({@see DefaultLeaseManager} + {@see LeaseIdempotency}) over a
  * {@see CycleLeaseStorage} from a {@see CycleLeaseConfig}.
  *
  * @internal Resolved from {@see CycleLeaseConfig::factory()} via the container; not part of the public API.
  */
-final readonly class CycleLeaseFactory implements StorageFactoryInterface
+final readonly class CycleLeaseFactory implements StorageFactory
 {
     public function __construct(
         private DatabaseProviderInterface $databases,
     ) {}
 
-    public function create(StorageConfig $config, StorageServices $services): IdempotencyInterface
+    public function create(StorageConfig $config, StorageServices $services): Idempotency
     {
         if (!$config instanceof CycleLeaseConfig) {
             throw new MisconfigurationException(
@@ -50,7 +50,7 @@ final readonly class CycleLeaseFactory implements StorageFactoryInterface
         );
 
         return new LeaseIdempotency(
-            new LeaseManager(
+            new DefaultLeaseManager(
                 new CycleLeaseStorage($database, $services->clock, $config->table),
                 $services->clock,
                 $services->tokens,

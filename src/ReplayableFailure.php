@@ -19,7 +19,7 @@ namespace Spiral\Idempotency;
  *
  * @api
  */
-interface ReplayableFailureInterface extends \Throwable
+interface ReplayableFailure extends \Throwable
 {
     /**
      * The minimal, JSON-safe state needed to reconstruct this failure on replay.

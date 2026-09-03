@@ -7,7 +7,7 @@ namespace Spiral\Idempotency\Driver\Cycle;
 use Spiral\Idempotency\Config\StorageConfig;
 use Spiral\Idempotency\Driver\Cycle\Internal\CycleLeaseFactory;
 use Spiral\Idempotency\Guarantee;
-use Spiral\Idempotency\StorageFactoryInterface;
+use Spiral\Idempotency\StorageFactory;
 
 /**
  * Data-only config for an AtLeastOnce lease over a Cycle DBAL connection.
@@ -47,7 +47,7 @@ final class CycleLeaseConfig extends StorageConfig
     }
 
     /**
-     * @return class-string<StorageFactoryInterface>
+     * @return class-string<StorageFactory>
      */
     public function factory(): string
     {

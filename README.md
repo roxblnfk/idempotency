@@ -25,7 +25,7 @@ Optional packages:
   `QueueRetryMiddleware`), making consumed jobs idempotent with `Locked → native job retry`;
 - `predis/predis` — the default client for the Redis/Valkey lease backend (`RedisLeaseConfig`): AtLeastOnce
   storage over a Redis-compatible server, with server-side TTL (no GC needed) and atomic Lua CAS. Not
-  needed when `Driver\Redis\RedisCommandsInterface` is bound to an adapter over the app's own Redis client;
+  needed when `Driver\Redis\RedisCommands` is bound to an adapter over the app's own Redis client;
 - `spiral/cycle-bridge` — integrates the idempotency tables into the ORM schema
   (`cycle:sync` / `cycle:migrate`).
 
@@ -105,16 +105,16 @@ return [
 ```
 
 Add **one line** to your existing domain-core interceptor list — reference the
-`IdempotencyInterceptorInterface` alias, not a concrete class:
+`IdempotencyInterceptor` alias, not a concrete class:
 
 ```php
-use Spiral\Idempotency\Interceptor\IdempotencyInterceptorInterface;
+use Spiral\Idempotency\Interceptor\IdempotencyInterceptor;
 
 final class AppBootloader extends DomainBootloader
 {
     protected const INTERCEPTORS = [
         // ...your existing interceptors (Cycle, Guard, ...) — innermost after auth:
-        IdempotencyInterceptorInterface::class,
+        IdempotencyInterceptor::class,
     ];
 }
 ```
@@ -139,13 +139,13 @@ Create the tables with the project's normal workflow: `php app.php cycle:sync` (
 migration with `cycle:migrate`).
 
 > [!NOTE]
-> Reference the `IdempotencyInterceptorInterface` **alias**, with no scope. The `DomainBootloader`
+> Reference the `IdempotencyInterceptor` **alias**, with no scope. The `DomainBootloader`
 > interceptor list is resolved in the root container, where the alias is a forwarding proxy: on every
 > call it resolves the real, transport-flavored interceptor from the active dispatcher scope (the
 > `http` scope, where `HttpIdempotencyBootloader` bound it; the `queue` scope for
 > `QueueIdempotencyBootloader`). So the same domain core works in any scope, and every transport
 > reuses the same alias. Referencing the concrete
-> `IdempotencyInterceptor` class instead would fail — it is deliberately unbound in root. Invoking the
+> `PipelineIdempotencyInterceptor` class instead would fail — it is deliberately unbound in root. Invoking the
 > proxy outside a transport scope fails fast with a friendly `MisconfigurationException`.
 
 ### HTTP behaviour
@@ -195,9 +195,9 @@ Register the interceptor on the **consume** side (same alias, no concrete class)
 `app/config/queue.php` under `interceptors.consume`, or via the bootloader:
 
 ```php
-use Spiral\Idempotency\Interceptor\IdempotencyInterceptorInterface;
+use Spiral\Idempotency\Interceptor\IdempotencyInterceptor;
 
-$queue->addConsumeInterceptor(IdempotencyInterceptorInterface::class);
+$queue->addConsumeInterceptor(IdempotencyInterceptor::class);
 ```
 
 > [!IMPORTANT]
@@ -267,11 +267,11 @@ The client sends the key as metadata; the server-side key middleware reads `idem
 
 Unlike HTTP, no configuration is needed to keep a **failure** replay faithful: over gRPC a negative
 outcome *is* a status, and `code` + `message` + `details` is a complete, deterministic snapshot of what
-the client sees. Bind a `DomainFailureMapperInterface` only if the service throws plain domain
+the client sees. Bind a `DomainFailureMapper` only if the service throws plain domain
 exceptions instead of `GRPCException` — that mapping otherwise happens above the interceptor, too late
 to be cached, and the replay would answer with a different status.
 
-Infrastructure and Bug failures (including a `GRPCException` marked `RetryableInterface`) are never
+Infrastructure and Bug failures (including a `GRPCException` marked `Retryable`) are never
 snapshotted: they stay exceptions so the key is released and a retry re-runs.
 
 ### The `#[Idempotent]` attribute
@@ -353,7 +353,7 @@ public function handle(string $transactionId): Receipt
 ```
 
 The programmatic path applies no automatic namespacing — compose the final key yourself
-(`KeyResolverInterface` is available as a service and supports `parentKey` hierarchies for
+(`KeyResolver` is available as a service and supports `parentKey` hierarchies for
 composing multi-step chains).
 
 ### Failure classification
@@ -364,15 +364,15 @@ and "will a retry help" are independent axes:
 | Kind               | Default mapping                                                                   | Lease reaction                                        |
 |--------------------|-----------------------------------------------------------------------------------|-------------------------------------------------------|
 | **Domain**         | any other `\Exception`                                                            | Cached as a valid negative outcome, replayed on retry |
-| **Infrastructure** | `\Error`, or `\Exception` implementing `RetryableInterface`                       | The key is released; the transport/client retries     |
+| **Infrastructure** | `\Error`, or `\Exception` implementing `Retryable`                       | The key is released; the transport/client retries     |
 | **Bug**            | Only by explicit configuration (`DefaultFailureClassifier(bugExceptions: [...])`) | The key is released; no re-enqueue — report and fix   |
 
 A cached domain failure is replayed as `CachedDomainFailureException` carrying the original class
-name and message. For an **exact-type** replay, implement `ReplayableFailureInterface` on the
+name and message. For an **exact-type** replay, implement `ReplayableFailure` on the
 domain exception:
 
 ```php
-final class PaymentDeclined extends \DomainException implements ReplayableFailureInterface
+final class PaymentDeclined extends \DomainException implements ReplayableFailure
 {
     public function toReplayPayload(): array
     {
@@ -397,13 +397,13 @@ Three ways to keep the replay identical to the first attempt, best first:
 
 1. **Return an error response** instead of throwing — it is snapshotted and replayed byte-identically,
    status included. Nothing to configure.
-2. **Bind a `DomainFailureRendererInterface`** — keeps the throwing style: `HttpOutcomeMiddleware`
+2. **Bind a `DomainFailureRenderer`** — keeps the throwing style: `HttpOutcomeMiddleware`
    renders Domain-classified throwables into a response *inside* the operation, so the outcome is
    cached as a response snapshot and the replay carries the same status **and** the
    `Idempotency-Replay` header:
 
    ```php
-   final class DeclineRenderer implements DomainFailureRendererInterface
+   final class DeclineRenderer implements DomainFailureRenderer
    {
        public function __construct(private ResponseFactoryInterface $responses) {}
 
@@ -417,7 +417,7 @@ Three ways to keep the replay identical to the first attempt, best first:
    }
    ```
 
-   Bind it in a bootloader (`DomainFailureRendererInterface::class => DeclineRenderer::class`) — the
+   Bind it in a bootloader (`DomainFailureRenderer::class => DeclineRenderer::class`) — the
    middleware picks it up by autowiring. Only `FailureKind::Domain` failures reach the renderer:
    Infrastructure and Bug ones stay exceptions, so the key is still released and a retry re-runs. The
    `cacheable` predicate still applies, so a rendered 5xx is not cached either. Rows written *before*
@@ -431,13 +431,13 @@ Three ways to keep the replay identical to the first attempt, best first:
   `ExecutionMiddleware` (domain phase around the operation).
 - **Serializer** — cached results are serialized with `spiral/serializer` (`PhpSerializer` by
   default); bind your own `SerializerInterface` to switch, e.g. to JSON.
-- **Classifier** — bind `FailureClassifierInterface` to replace the default failure mapping.
-- **Domain failure rendering** — bind `DomainFailureRendererInterface` to turn thrown domain failures
+- **Classifier** — bind `FailureClassifier` to replace the default failure mapping.
+- **Domain failure rendering** — bind `DomainFailureRenderer` to turn thrown domain failures
   into cached HTTP responses, so a replay reproduces the same status (see above).
-- **Key policy** — bind `KeyResolverInterface` to change normalization, hashing and hierarchy
+- **Key policy** — bind `KeyResolver` to change normalization, hashing and hierarchy
   composition.
 - **Schema** — role names of the generated ORM tables are customizable via
-  `SchemaNamingInterface`; table names live in the storage configs.
+  `SchemaNaming`; table names live in the storage configs.
 
 > [!IMPORTANT]
 > The default `PhpSerializer` unserializes blobs read from the idempotency tables. The trust

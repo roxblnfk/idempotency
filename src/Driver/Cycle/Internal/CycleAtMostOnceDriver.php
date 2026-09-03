@@ -12,8 +12,8 @@ use Psr\Clock\ClockInterface;
 use Spiral\Idempotency\Exception\MisconfigurationException;
 use Spiral\Idempotency\ExecuteOptions;
 use Spiral\Idempotency\Guarantee;
-use Spiral\Idempotency\GuaranteeProviderInterface;
-use Spiral\Idempotency\IdempotencyInterface;
+use Spiral\Idempotency\GuaranteeProvider;
+use Spiral\Idempotency\Idempotency;
 use Spiral\Idempotency\Uncacheable;
 use Spiral\Serializer\Serializer\PhpSerializer;
 use Spiral\Serializer\SerializerInterface;
@@ -39,7 +39,7 @@ use Spiral\Serializer\SerializerInterface;
  * @internal Built per storage alias by the factory; consumers resolve the configured storage from the
  *           {@see \Spiral\Idempotency\IdempotencyRegistry}. Not part of the public API.
  */
-final readonly class CycleAtMostOnceDriver implements IdempotencyInterface, GuaranteeProviderInterface
+final readonly class CycleAtMostOnceDriver implements Idempotency, GuaranteeProvider
 {
     private SerializerInterface $serializer;
 

@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Spiral\Idempotency\Tests\Unit\Pipeline;
 
-use Spiral\Idempotency\Pipeline\RetryableInterface;
+use Spiral\Idempotency\Pipeline\Retryable;
 use Spiral\Idempotency\Pipeline\RetryPolicy;
 use Testo\Assert;
 use Testo\Codecov\Covers;
@@ -50,7 +50,7 @@ final class RetryPolicyTest
 
     public function unrelatedRetryableMarkerStillRetryable(): void
     {
-        $e = new class ('x') extends \Exception implements RetryableInterface {};
+        $e = new class ('x') extends \Exception implements Retryable {};
 
         Assert::true((new RetryPolicy())->isRetryable($e));
     }

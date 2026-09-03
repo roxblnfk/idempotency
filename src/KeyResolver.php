@@ -16,7 +16,7 @@ use Spiral\Idempotency\Exception\NonDeterministicKeyException;
  *
  * @api
  */
-interface KeyResolverInterface
+interface KeyResolver
 {
     /**
      * @param string|null $raw raw key material extracted from the transport by a resolution middleware

@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Spiral\Idempotency;
 
 /**
- * Optional per-call overrides for {@see IdempotencyInterface::execute()}. Each field falls back to the
+ * Optional per-call overrides for {@see Idempotency::execute()}. Each field falls back to the
  * storage's configured default when null — typically sourced from an {@see Attribute\Idempotent}
  * attribute by the interceptor.
  *

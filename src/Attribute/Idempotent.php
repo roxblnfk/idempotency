@@ -37,7 +37,7 @@ final readonly class Idempotent
      *        | {@see self::SCOPE_GLOBAL} (`''`) | opt out: one global key space for the alias, client owns uniqueness |
      *
      *        Applies to the transport (attribute/interceptor) path only — a direct
-     *        {@see \Spiral\Idempotency\IdempotencyInterface::execute()} call takes the final key as given.
+     *        {@see \Spiral\Idempotency\Idempotency::execute()} call takes the final key as given.
      */
     public function __construct(
         public string $storage,

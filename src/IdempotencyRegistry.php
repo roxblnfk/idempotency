@@ -8,7 +8,7 @@ use Spiral\Idempotency\Exception\MisconfigurationException;
 
 /**
  * Resolves a semantic storage alias (from the {@see Attribute\Idempotent} attribute / config) to a
- * concrete {@see IdempotencyInterface} driver.
+ * concrete {@see Idempotency} driver.
  *
  * At registration it verifies — fail-fast — that the driver can actually back the *declared*
  * guarantee. This is the checkable part: not "will the handler reach the guarantee" (not
@@ -18,12 +18,12 @@ use Spiral\Idempotency\Exception\MisconfigurationException;
  */
 final class IdempotencyRegistry
 {
-    /** @var array<non-empty-string, IdempotencyInterface> */
+    /** @var array<non-empty-string, Idempotency> */
     private array $drivers = [];
 
-    public function register(string $alias, IdempotencyInterface $driver, Guarantee $declared): void
+    public function register(string $alias, Idempotency $driver, Guarantee $declared): void
     {
-        if ($driver instanceof GuaranteeProviderInterface && !$driver->guarantee()->satisfies($declared)) {
+        if ($driver instanceof GuaranteeProvider && !$driver->guarantee()->satisfies($declared)) {
             throw new MisconfigurationException(
                 \sprintf(
                     'Storage alias "%s" declares guarantee %s, but driver %s can only provide %s.',
@@ -42,7 +42,7 @@ final class IdempotencyRegistry
         $this->drivers[$alias] = $driver;
     }
 
-    public function get(string $alias): IdempotencyInterface
+    public function get(string $alias): Idempotency
     {
         return $this->drivers[$alias] ?? throw new MisconfigurationException(
             \sprintf('No idempotency storage registered under alias "%s".', $alias),

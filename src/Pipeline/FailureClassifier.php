@@ -10,7 +10,7 @@ namespace Spiral\Idempotency\Pipeline;
  *
  * @api
  */
-interface FailureClassifierInterface
+interface FailureClassifier
 {
     public function classify(\Throwable $e): FailureKind;
 }

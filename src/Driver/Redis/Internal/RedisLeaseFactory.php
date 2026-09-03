@@ -7,33 +7,33 @@ namespace Spiral\Idempotency\Driver\Redis\Internal;
 use Psr\Container\ContainerInterface;
 use Spiral\Idempotency\Config\StorageConfig;
 use Spiral\Idempotency\Driver\Redis\PredisCommands;
-use Spiral\Idempotency\Driver\Redis\RedisCommandsInterface;
+use Spiral\Idempotency\Driver\Redis\RedisCommands;
 use Spiral\Idempotency\Driver\Redis\RedisLeaseConfig;
 use Spiral\Idempotency\Exception\MisconfigurationException;
-use Spiral\Idempotency\IdempotencyInterface;
+use Spiral\Idempotency\Idempotency;
 use Spiral\Idempotency\Internal\Lease\LeaseIdempotency;
-use Spiral\Idempotency\Internal\Lease\LeaseManager;
+use Spiral\Idempotency\Internal\Lease\DefaultLeaseManager;
 use Spiral\Idempotency\Pipeline\Middleware\ClassifierMiddleware;
 use Spiral\Idempotency\Pipeline\Pipeline;
-use Spiral\Idempotency\StorageFactoryInterface;
+use Spiral\Idempotency\StorageFactory;
 use Spiral\Idempotency\StorageServices;
 
 /**
- * Builds the lease engine ({@see LeaseManager} + {@see LeaseIdempotency}) over a
+ * Builds the lease engine ({@see DefaultLeaseManager} + {@see LeaseIdempotency}) over a
  * {@see RedisLeaseStorage} from a {@see RedisLeaseConfig}.
  *
- * The Redis connection comes from the container: a {@see RedisCommandsInterface} binding wins; without
+ * The Redis connection comes from the container: a {@see RedisCommands} binding wins; without
  * one a `\Predis\ClientInterface` binding is wrapped in {@see PredisCommands}.
  *
  * @internal Resolved from {@see RedisLeaseConfig::factory()} via the container; not part of the public API.
  */
-final readonly class RedisLeaseFactory implements StorageFactoryInterface
+final readonly class RedisLeaseFactory implements StorageFactory
 {
     public function __construct(
         private ContainerInterface $container,
     ) {}
 
-    public function create(StorageConfig $config, StorageServices $services): IdempotencyInterface
+    public function create(StorageConfig $config, StorageServices $services): Idempotency
     {
         if (!$config instanceof RedisLeaseConfig) {
             throw new MisconfigurationException(
@@ -47,7 +47,7 @@ final readonly class RedisLeaseFactory implements StorageFactoryInterface
         $execution = new Pipeline(new ClassifierMiddleware($services->classifier));
 
         return new LeaseIdempotency(
-            new LeaseManager(
+            new DefaultLeaseManager(
                 new RedisLeaseStorage($this->commands(), $services->clock, $config->keyPrefix),
                 $services->clock,
                 $services->tokens,
@@ -61,11 +61,11 @@ final readonly class RedisLeaseFactory implements StorageFactoryInterface
         );
     }
 
-    private function commands(): RedisCommandsInterface
+    private function commands(): RedisCommands
     {
-        if ($this->container->has(RedisCommandsInterface::class)) {
-            /** @var RedisCommandsInterface */
-            return $this->container->get(RedisCommandsInterface::class);
+        if ($this->container->has(RedisCommands::class)) {
+            /** @var RedisCommands */
+            return $this->container->get(RedisCommands::class);
         }
 
         if (\interface_exists(\Predis\ClientInterface::class) && $this->container->has(\Predis\ClientInterface::class)) {
@@ -77,8 +77,8 @@ final readonly class RedisLeaseFactory implements StorageFactoryInterface
 
         throw new MisconfigurationException(
             'RedisLeaseConfig needs a Redis connection, but the container binds neither '
-            . RedisCommandsInterface::class . ' nor \Predis\ClientInterface.',
-            'Bind Spiral\Idempotency\Driver\Redis\RedisCommandsInterface to an adapter over the Redis client '
+            . RedisCommands::class . ' nor \Predis\ClientInterface.',
+            'Bind Spiral\Idempotency\Driver\Redis\RedisCommands to an adapter over the Redis client '
             . 'your application already uses, or install predis/predis and bind \Predis\ClientInterface.',
         );
     }

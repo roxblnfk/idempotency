@@ -5,14 +5,14 @@ declare(strict_types=1);
 namespace Spiral\Idempotency\Driver\Redis\Internal;
 
 use Psr\Clock\ClockInterface;
-use Spiral\Idempotency\Driver\Redis\RedisCommandsInterface;
+use Spiral\Idempotency\Driver\Redis\RedisCommands;
 use Spiral\Idempotency\Lease\LeaseState;
-use Spiral\Idempotency\Lease\LeaseStorageInterface;
+use Spiral\Idempotency\Lease\LeaseStorage;
 use Spiral\Idempotency\Lease\StoredEntry;
 
 /**
  * Lease storage over a Redis-compatible server (Redis, Valkey, Dragonfly), reached through the three
- * commands of {@see RedisCommandsInterface} so any client library can back it.
+ * commands of {@see RedisCommands} so any client library can back it.
  *
  * Data model: one Redis HASH per idempotency key at `{keyPrefix}{key}`, with fields `state`
  * (PROCESSING|COMPLETED), `token` (fencing token), `success` ('1'/'0') and `result` (opaque serialized
@@ -22,22 +22,22 @@ use Spiral\Idempotency\Lease\StoredEntry;
  * MySQL-style "changed-vs-matched rowCount" workaround either.
  *
  * Every mutation is ONE `EVAL` (a Lua script runs atomically on the server), satisfying the
- * single-roundtrip-CAS contract of {@see LeaseStorageInterface} (owner-check + mutation in one op, no
+ * single-roundtrip-CAS contract of {@see LeaseStorage} (owner-check + mutation in one op, no
  * PHP-level get()+set()). Lua `HGET` returns `false` for a missing field/key, so the `~= token`
  * ownership guard also rejects vanished keys.
  *
  * read() is advisory (used ONLY in the conflict branch of acquire), so it is allowed to be 2
  * round-trips (HGETALL + PTTL); this avoids the Lua nil-truncation pitfall of returning a table.
  *
- * @internal Bound to {@see LeaseStorageInterface} per alias by the factory; not public API.
+ * @internal Bound to {@see LeaseStorage} per alias by the factory; not public API.
  */
-final readonly class RedisLeaseStorage implements LeaseStorageInterface
+final readonly class RedisLeaseStorage implements LeaseStorage
 {
     /**
      * @param non-empty-string $keyPrefix
      */
     public function __construct(
-        private RedisCommandsInterface $client,
+        private RedisCommands $client,
         private ClockInterface $clock,
         private string $keyPrefix = 'idempotency:',
     ) {}

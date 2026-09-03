@@ -16,7 +16,7 @@ namespace Spiral\Idempotency\Driver\Redis;
  *
  * @api
  */
-interface RedisCommandsInterface
+interface RedisCommands
 {
     /**
      * EVAL with the given KEYS and ARGV; returns the script's reply (an int for the lease scripts).

@@ -6,8 +6,8 @@ Cycle is an *optional* driver — core (`src/` outside `Driver/Cycle`) must carr
 
 Transports are optional too: their packages are `require-dev` + `suggest`, and their types stay
 confined to the transport adapter dir. HTTP (`src/Http`, `psr/http-message`) and Queue (`src/Queue`,
-`spiral/queue`) each bind a `transport:`-flavored `IdempotencyInterceptor` in their dispatcher scope
-(`http` / `queue`) under the shared `IdempotencyInterceptorInterface` alias.
+`spiral/queue`) each bind a `transport:`-flavored `PipelineIdempotencyInterceptor` in their dispatcher scope
+(`http` / `queue`) under the shared `IdempotencyInterceptor` alias.
 
 gRPC (`src/Grpc`) imports only `spiral/roadrunner-grpc` (+ `google/protobuf`, `google/common-protos`)
 types, but the integration it plugs into is `spiral/roadrunner-bridge` — a **behavioural** dependency

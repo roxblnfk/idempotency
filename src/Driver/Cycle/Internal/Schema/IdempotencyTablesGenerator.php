@@ -14,7 +14,7 @@ use Spiral\Idempotency\Driver\Cycle\CycleInboxConfig;
 use Spiral\Idempotency\Driver\Cycle\CycleLeaseConfig;
 use Spiral\Idempotency\Driver\Cycle\CycleSchema;
 use Spiral\Idempotency\Driver\Cycle\Schema\ColumnDefinition;
-use Spiral\Idempotency\Driver\Cycle\Schema\SchemaNamingInterface;
+use Spiral\Idempotency\Driver\Cycle\Schema\SchemaNaming;
 use Spiral\Idempotency\Driver\Cycle\Schema\TableDefinition;
 
 /**
@@ -30,7 +30,7 @@ final class IdempotencyTablesGenerator implements GeneratorInterface
 {
     public function __construct(
         private readonly IdempotencyConfig $config,
-        private readonly SchemaNamingInterface $naming,
+        private readonly SchemaNaming $naming,
     ) {}
 
     public function run(Registry $registry): Registry

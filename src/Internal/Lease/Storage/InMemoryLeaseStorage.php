@@ -6,11 +6,11 @@ namespace Spiral\Idempotency\Internal\Lease\Storage;
 
 use Psr\Clock\ClockInterface;
 use Spiral\Idempotency\Lease\LeaseState;
-use Spiral\Idempotency\Lease\LeaseStorageInterface;
+use Spiral\Idempotency\Lease\LeaseStorage;
 use Spiral\Idempotency\Lease\StoredEntry;
 
 /**
- * In-process {@see LeaseStorageInterface} — single-process, for tests and single-worker setups.
+ * In-process {@see LeaseStorage} — single-process, for tests and single-worker setups.
  * TTL expiry is computed against the injected {@see ClockInterface}; an expired record is treated as
  * absent (so acquire() over it succeeds), mirroring Redis key expiry.
  *
@@ -18,7 +18,7 @@ use Spiral\Idempotency\Lease\StoredEntry;
  *
  * @internal Implementation detail / test aid; not part of the public API. May change at any time.
  */
-final class InMemoryLeaseStorage implements LeaseStorageInterface
+final class InMemoryLeaseStorage implements LeaseStorage
 {
     /** @var array<string, StoredEntry> */
     private array $entries = [];

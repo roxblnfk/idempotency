@@ -10,7 +10,7 @@ namespace Spiral\Idempotency\Lease;
  *
  * @api
  */
-interface TokenFactoryInterface
+interface TokenFactory
 {
     /**
      * @return non-empty-string

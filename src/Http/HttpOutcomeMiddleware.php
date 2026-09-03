@@ -12,7 +12,7 @@ use Spiral\Idempotency\Exception\MissingKeyException;
 use Spiral\Idempotency\IdempotencyContext;
 use Spiral\Idempotency\Internal\Pipeline\DefaultFailureClassifier;
 use Spiral\Idempotency\Lease\Locked;
-use Spiral\Idempotency\Pipeline\FailureClassifierInterface;
+use Spiral\Idempotency\Pipeline\FailureClassifier;
 use Spiral\Idempotency\Pipeline\FailureKind;
 use Spiral\Idempotency\Pipeline\IdempotencyCall;
 use Spiral\Idempotency\Pipeline\ResolutionMiddleware;
@@ -30,7 +30,7 @@ use Spiral\Idempotency\Uncacheable;
  *  - turns a {@see MissingKeyException} into `400 Bad Request` (a missing key is a client error, not a 500);
  *  - wraps a non-cacheable response (default: status >= 500, transient) in {@see Uncacheable}, so the
  *    lease handler releases the key and a retry re-runs instead of replaying the error forever;
- *  - with a {@see DomainFailureRendererInterface} bound, renders a THROWN domain failure into a response
+ *  - with a {@see DomainFailureRenderer} bound, renders a THROWN domain failure into a response
  *    before it is cached, so a replay reproduces the same status (see below).
  *
  * Order-independent w.r.t. the key middleware: the resolved key travels in the response snapshot (read
@@ -42,12 +42,12 @@ use Spiral\Idempotency\Uncacheable;
  * Domain failures expressed as a THROWN exception need care, because a throw bypasses the response
  * snapshot: the first attempt is rendered by the application exception handler, while a replay rethrows
  * a {@see \Spiral\Idempotency\Exception\CachedDomainFailureException} (or the exact type, when the
- * exception implements {@see \Spiral\Idempotency\ReplayableFailureInterface}) — usually a DIFFERENT
+ * exception implements {@see \Spiral\Idempotency\ReplayableFailure}) — usually a DIFFERENT
  * status than the first attempt. Three ways out, best first:
  *
  *  1. return a Response for negative domain outcomes instead of throwing — it is snapshotted and
  *     replayed byte-identically;
- *  2. bind a {@see DomainFailureRendererInterface}: this middleware then renders Domain-classified
+ *  2. bind a {@see DomainFailureRenderer}: this middleware then renders Domain-classified
  *     throwables into a response INSIDE the operation, which restores case 1 without changing the
  *     action's style (rows cached BEFORE the renderer was bound still replay as a throw);
  *  3. map {@see \Spiral\Idempotency\Exception\CachedDomainFailureException::$originalClass} in the
@@ -69,14 +69,14 @@ final readonly class HttpOutcomeMiddleware implements ResolutionMiddleware
     /** @var \Closure(ResponseInterface): bool */
     private \Closure $cacheable;
 
-    private FailureClassifierInterface $classifier;
+    private FailureClassifier $classifier;
 
     /**
      * @param (\Closure(ResponseInterface): bool)|null $cacheable decides whether a response may be
      *        cached; default: only status < 500 (transient 5xx are re-run, not replayed)
-     * @param DomainFailureRendererInterface|null $failures renders a thrown domain failure into the
+     * @param DomainFailureRenderer|null $failures renders a thrown domain failure into the
      *        response to cache and replay; null (default) rethrows it untouched
-     * @param FailureClassifierInterface|null $classifier decides which throwables are Domain and may
+     * @param FailureClassifier|null $classifier decides which throwables are Domain and may
      *        therefore be rendered; defaults to {@see DefaultFailureClassifier}. Bind the same classifier
      *        the drivers use (the bootloader does) so both agree on what a domain failure is.
      */
@@ -84,8 +84,8 @@ final readonly class HttpOutcomeMiddleware implements ResolutionMiddleware
         private ResponseFactoryInterface $responses,
         private StreamFactoryInterface $streams,
         ?\Closure $cacheable = null,
-        private ?DomainFailureRendererInterface $failures = null,
-        ?FailureClassifierInterface $classifier = null,
+        private ?DomainFailureRenderer $failures = null,
+        ?FailureClassifier $classifier = null,
     ) {
         $this->cacheable = $cacheable ?? static fn(ResponseInterface $response): bool
             => $response->getStatusCode() < 500;

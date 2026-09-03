@@ -96,7 +96,7 @@ Key from the `idempotency-key` metadata entry (case-insensitive; configurable vi
 | ...with a transient status (`UNAVAILABLE`, `DEADLINE_EXCEEDED`, `INTERNAL`, ...) | Not cached: key released, a retry re-runs (predicate of `GrpcOutcomeMiddleware`) |
 | Dedup hit with no cached message (AtMostOnce duplicate / void op) | The method's declared response type is returned empty |
 
-Bind `Grpc\DomainFailureMapperInterface` only if the service throws plain domain exceptions
+Bind `Grpc\DomainFailureMapper` only if the service throws plain domain exceptions
 instead of `GRPCException` — otherwise that mapping happens above the interceptor, too late to be
 cached, and a replay would answer with a different status.
 
@@ -142,7 +142,7 @@ $this->registry->get('payments')->execute(
 );
 ```
 
-No automatic namespacing here — compose the final key yourself (`KeyResolverInterface` is a
+No automatic namespacing here — compose the final key yourself (`KeyResolver` is a
 service and supports `parentKey` hierarchies for multi-step chains).
 
 ## Long-running operations

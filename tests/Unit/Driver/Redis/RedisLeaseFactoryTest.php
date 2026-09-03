@@ -7,10 +7,10 @@ namespace Spiral\Idempotency\Tests\Unit\Driver\Redis;
 use Spiral\Core\Container;
 use Spiral\Idempotency\Driver\Redis\Internal\RedisLeaseFactory;
 use Spiral\Idempotency\Driver\Redis\PredisCommands;
-use Spiral\Idempotency\Driver\Redis\RedisCommandsInterface;
+use Spiral\Idempotency\Driver\Redis\RedisCommands;
 use Spiral\Idempotency\Driver\Redis\RedisLeaseConfig;
 use Spiral\Idempotency\Exception\MisconfigurationException;
-use Spiral\Idempotency\IdempotencyInterface;
+use Spiral\Idempotency\Idempotency;
 use Spiral\Idempotency\Internal\Lease\RandomTokenFactory;
 use Spiral\Idempotency\Internal\Pipeline\DefaultFailureClassifier;
 use Spiral\Idempotency\StorageServices;
@@ -32,11 +32,11 @@ final class RedisLeaseFactoryTest
     public function usesABoundCommandsAdapter(): void
     {
         $container = new Container();
-        $container->bindSingleton(RedisCommandsInterface::class, $this->commands());
+        $container->bindSingleton(RedisCommands::class, $this->commands());
 
         $idempotency = new RedisLeaseFactory($container)->create(new RedisLeaseConfig(), $this->services());
 
-        Assert::instanceOf($idempotency, IdempotencyInterface::class);
+        Assert::instanceOf($idempotency, Idempotency::class);
     }
 
     public function fallsBackToAPredisClientBinding(): void
@@ -46,7 +46,7 @@ final class RedisLeaseFactoryTest
 
         $idempotency = new RedisLeaseFactory($container)->create(new RedisLeaseConfig(), $this->services());
 
-        Assert::instanceOf($idempotency, IdempotencyInterface::class);
+        Assert::instanceOf($idempotency, Idempotency::class);
     }
 
     public function commandsBindingWinsOverPredis(): void
@@ -57,23 +57,23 @@ final class RedisLeaseFactoryTest
             \Predis\ClientInterface::class,
             static fn(): never => throw new \LogicException('predis must not be resolved'),
         );
-        $container->bindSingleton(RedisCommandsInterface::class, $this->commands());
+        $container->bindSingleton(RedisCommands::class, $this->commands());
 
         $idempotency = new RedisLeaseFactory($container)->create(new RedisLeaseConfig(), $this->services());
 
-        Assert::instanceOf($idempotency, IdempotencyInterface::class);
+        Assert::instanceOf($idempotency, Idempotency::class);
     }
 
     public function failsFastWithoutAnyConnectionBinding(): void
     {
-        Expect::exception(MisconfigurationException::class)->withMessageContaining('RedisCommandsInterface');
+        Expect::exception(MisconfigurationException::class)->withMessageContaining('RedisCommands');
 
         new RedisLeaseFactory(new Container())->create(new RedisLeaseConfig(), $this->services());
     }
 
-    private function commands(): RedisCommandsInterface
+    private function commands(): RedisCommands
     {
-        return new class implements RedisCommandsInterface {
+        return new class implements RedisCommands {
             public function eval(string $script, array $keys, array $args): mixed
             {
                 return 1;

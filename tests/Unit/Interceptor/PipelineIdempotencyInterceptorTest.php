@@ -17,19 +17,19 @@ use Spiral\Idempotency\Config\IdempotencyConfig;
 use Spiral\Idempotency\Exception\CachedDomainFailureException;
 use Spiral\Idempotency\Exception\MisconfigurationException;
 use Spiral\Idempotency\Guarantee;
-use Spiral\Idempotency\Http\DomainFailureRendererInterface;
+use Spiral\Idempotency\Http\DomainFailureRenderer;
 use Spiral\Idempotency\Http\HttpKeyMiddleware;
 use Spiral\Idempotency\Http\HttpOutcomeMiddleware;
 use Spiral\Idempotency\IdempotencyContext;
 use Spiral\Idempotency\IdempotencyRegistry;
-use Spiral\Idempotency\Interceptor\IdempotencyInterceptor;
-use Spiral\Idempotency\Internal\Key\KeyResolver;
+use Spiral\Idempotency\Interceptor\PipelineIdempotencyInterceptor;
+use Spiral\Idempotency\Internal\Key\DefaultKeyResolver;
 use Spiral\Idempotency\Internal\Lease\LeaseIdempotency;
-use Spiral\Idempotency\Internal\Lease\LeaseManager;
+use Spiral\Idempotency\Internal\Lease\DefaultLeaseManager;
 use Spiral\Idempotency\Internal\Lease\Storage\InMemoryLeaseStorage;
-use Spiral\Idempotency\KeyResolverInterface;
+use Spiral\Idempotency\KeyResolver;
 use Spiral\Idempotency\Pipeline\Pipeline;
-use Spiral\Idempotency\ReplayableFailureInterface;
+use Spiral\Idempotency\ReplayableFailure;
 use Spiral\Idempotency\Tests\Support\MutableClock;
 use Spiral\Interceptors\Context\CallContext;
 use Spiral\Interceptors\Context\CallContextInterface;
@@ -130,9 +130,9 @@ final class CountingHandler implements HandlerInterface
 }
 
 /**
- * A domain failure that opts into faithful, exact-type replay via {@see ReplayableFailureInterface}.
+ * A domain failure that opts into faithful, exact-type replay via {@see ReplayableFailure}.
  */
-final class DeclinedFailureStub extends \DomainException implements ReplayableFailureInterface
+final class DeclinedFailureStub extends \DomainException implements ReplayableFailure
 {
     public function __construct(public readonly int $declineCode)
     {
@@ -167,7 +167,7 @@ final class ThrowingHandler implements HandlerInterface
 
 /**
  * A domain failure that does NOT opt into replay — stands in for an exception the application does not
- * own (thrown by a library), where {@see ReplayableFailureInterface} is not an option.
+ * own (thrown by a library), where {@see ReplayableFailure} is not an option.
  */
 final class PlainDeclineStub extends \DomainException {}
 
@@ -192,7 +192,7 @@ final class FailingHandler implements HandlerInterface
  * Renders domain failures into a fixed-status response, or declines them (null) when constructed with a
  * null status. Counts consultations, so a test can assert a non-Domain failure never reaches it.
  */
-final class DomainFailureRendererStub implements DomainFailureRendererInterface
+final class DomainFailureRendererStub implements DomainFailureRenderer
 {
     public int $calls = 0;
 
@@ -215,9 +215,9 @@ final class DomainFailureRendererStub implements DomainFailureRendererInterface
 }
 
 #[Test]
-#[Covers(IdempotencyInterceptor::class)]
+#[Covers(PipelineIdempotencyInterceptor::class)]
 #[Covers(HttpOutcomeMiddleware::class)]
-final class IdempotencyInterceptorTest
+final class PipelineIdempotencyInterceptorTest
 {
     private Psr17Factory $psr17;
 
@@ -229,16 +229,16 @@ final class IdempotencyInterceptorTest
     /**
      * @param list<class-string>|null $stack resolution-middleware order (defaults to the canonical
      *        [outcome, key] — outcome outermost)
-     * @param DomainFailureRendererInterface|null $failures bound into the outcome middleware; null keeps
+     * @param DomainFailureRenderer|null $failures bound into the outcome middleware; null keeps
      *        the throw-through behaviour for domain failures
      */
     private function interceptor(
         ?array $stack = null,
-        ?LeaseManager $manager = null,
-        ?DomainFailureRendererInterface $failures = null,
-    ): IdempotencyInterceptor {
+        ?DefaultLeaseManager $manager = null,
+        ?DomainFailureRenderer $failures = null,
+    ): PipelineIdempotencyInterceptor {
         $clock = new MutableClock();
-        $manager ??= new LeaseManager(new InMemoryLeaseStorage($clock), $clock);
+        $manager ??= new DefaultLeaseManager(new InMemoryLeaseStorage($clock), $clock);
         $registry = new IdempotencyRegistry();
         $registry->register(
             'http',
@@ -250,13 +250,13 @@ final class IdempotencyInterceptorTest
         $container = new class($this->psr17, $failures) implements ContainerInterface {
             public function __construct(
                 private readonly Psr17Factory $psr17,
-                private readonly ?DomainFailureRendererInterface $failures,
+                private readonly ?DomainFailureRenderer $failures,
             ) {}
 
             public function get(string $id): object
             {
                 return match ($id) {
-                    HttpKeyMiddleware::class => new HttpKeyMiddleware(new KeyResolver()),
+                    HttpKeyMiddleware::class => new HttpKeyMiddleware(new DefaultKeyResolver()),
                     HttpOutcomeMiddleware::class => new HttpOutcomeMiddleware(
                         $this->psr17,
                         $this->psr17,
@@ -278,7 +278,7 @@ final class IdempotencyInterceptorTest
             'transports' => ['http' => $stack ?? [HttpOutcomeMiddleware::class, HttpKeyMiddleware::class]],
         ]);
 
-        return new IdempotencyInterceptor($registry, new KeyResolver(), $container, $config, 'http');
+        return new PipelineIdempotencyInterceptor($registry, new DefaultKeyResolver(), $container, $config, 'http');
     }
 
     /**
@@ -384,7 +384,7 @@ final class IdempotencyInterceptorTest
         $interceptor = $this->interceptor();
         $handler = new CountingHandler($this->psr17);
 
-        // A whitespace-only key trims to empty — the resolver rejects it as missing (KeyResolver branch).
+        // A whitespace-only key trims to empty — the resolver rejects it as missing (DefaultKeyResolver branch).
         $request = $this->psr17->createServerRequest('POST', '/charge')->withHeader('Idempotency-Key', '   ');
 
         /** @var ResponseInterface $response */
@@ -508,7 +508,7 @@ final class IdempotencyInterceptorTest
         // With a real Spiral container, dispatch() must expose IdempotencyContext to the action via an
         // isolated child scope — visible inside, but not leaked into the root container afterwards.
         $container = new Container();
-        $container->bindSingleton(KeyResolverInterface::class, new KeyResolver());
+        $container->bindSingleton(KeyResolver::class, new DefaultKeyResolver());
         $container->bindSingleton(ResponseFactoryInterface::class, $this->psr17);
         $container->bindSingleton(StreamFactoryInterface::class, $this->psr17);
 
@@ -517,7 +517,7 @@ final class IdempotencyInterceptorTest
         $registry->register(
             'http',
             new LeaseIdempotency(
-                new LeaseManager(new InMemoryLeaseStorage($clock), $clock),
+                new DefaultLeaseManager(new InMemoryLeaseStorage($clock), $clock),
                 new Pipeline(),
                 lockTtl: 30,
                 retentionTtl: 3600,
@@ -527,7 +527,7 @@ final class IdempotencyInterceptorTest
         $config = new IdempotencyConfig([
             'transports' => ['http' => [HttpOutcomeMiddleware::class, HttpKeyMiddleware::class]],
         ]);
-        $interceptor = new IdempotencyInterceptor($registry, new KeyResolver(), $container, $config, 'http');
+        $interceptor = new PipelineIdempotencyInterceptor($registry, new DefaultKeyResolver(), $container, $config, 'http');
 
         $handler = new class($this->psr17) implements HandlerInterface {
             public bool $contextVisible = false;
@@ -597,11 +597,11 @@ final class IdempotencyInterceptorTest
     public function conflictResponseCarriesIdempotencyKey(): void
     {
         $clock = new MutableClock();
-        $manager = new LeaseManager(new InMemoryLeaseStorage($clock), $clock);
+        $manager = new DefaultLeaseManager(new InMemoryLeaseStorage($clock), $clock);
 
         // Occupy the key with an in-flight PROCESSING lease held by "someone else". The interceptor
         // namespaces the client key by operation identity, so the pre-acquired key must be the composite.
-        $key = (new KeyResolver())->resolve('busy-key', AnnotatedFixture::class . '::withKey');
+        $key = (new DefaultKeyResolver())->resolve('busy-key', AnnotatedFixture::class . '::withKey');
         $manager->acquire($key, 30);
 
         $interceptor = $this->interceptor(manager: $manager);
@@ -656,7 +656,7 @@ final class IdempotencyInterceptorTest
     {
         $renderer = new DomainFailureRendererStub($this->psr17);
         $interceptor = $this->interceptor(failures: $renderer);
-        // A domain exception the application does not own: no ReplayableFailureInterface possible.
+        // A domain exception the application does not own: no ReplayableFailure possible.
         $handler = new FailingHandler(new PlainDeclineStub('card expired'));
 
         /** @var ResponseInterface $first */
@@ -733,17 +733,17 @@ final class IdempotencyInterceptorTest
         // since the middleware's constructor parameter is optional (nullable + default) — the same
         // resolution path must also work with nothing bound (see bindsContextInIsolatedScopeWithoutLeaking).
         $container = new Container();
-        $container->bindSingleton(KeyResolverInterface::class, new KeyResolver());
+        $container->bindSingleton(KeyResolver::class, new DefaultKeyResolver());
         $container->bindSingleton(ResponseFactoryInterface::class, $this->psr17);
         $container->bindSingleton(StreamFactoryInterface::class, $this->psr17);
-        $container->bindSingleton(DomainFailureRendererInterface::class, new DomainFailureRendererStub($this->psr17));
+        $container->bindSingleton(DomainFailureRenderer::class, new DomainFailureRendererStub($this->psr17));
 
         $clock = new MutableClock();
         $registry = new IdempotencyRegistry();
         $registry->register(
             'http',
             new LeaseIdempotency(
-                new LeaseManager(new InMemoryLeaseStorage($clock), $clock),
+                new DefaultLeaseManager(new InMemoryLeaseStorage($clock), $clock),
                 new Pipeline(),
                 lockTtl: 30,
                 retentionTtl: 3600,
@@ -753,7 +753,7 @@ final class IdempotencyInterceptorTest
         $config = new IdempotencyConfig([
             'transports' => ['http' => [HttpOutcomeMiddleware::class, HttpKeyMiddleware::class]],
         ]);
-        $interceptor = new IdempotencyInterceptor($registry, new KeyResolver(), $container, $config, 'http');
+        $interceptor = new PipelineIdempotencyInterceptor($registry, new DefaultKeyResolver(), $container, $config, 'http');
         $handler = new FailingHandler(new PlainDeclineStub('declined'));
 
         /** @var ResponseInterface $response */

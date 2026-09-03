@@ -6,7 +6,7 @@ namespace Spiral\Idempotency\Tests\Unit\Queue;
 
 use Spiral\Idempotency\Exception\MissingKeyException;
 use Spiral\Idempotency\ExecuteOptions;
-use Spiral\Idempotency\Internal\Key\KeyResolver;
+use Spiral\Idempotency\Internal\Key\DefaultKeyResolver;
 use Spiral\Idempotency\Pipeline\IdempotencyCall;
 use Spiral\Idempotency\Queue\QueueKeyMiddleware;
 use Spiral\Interceptors\Context\CallContext;
@@ -55,7 +55,7 @@ final class QueueKeyMiddlewareTest
 
     public function passesThroughWhenKeyAlreadyResolved(): void
     {
-        $middleware = new QueueKeyMiddleware(new KeyResolver());
+        $middleware = new QueueKeyMiddleware(new DefaultKeyResolver());
         $call = $this->call($this->jobContext(['Idempotency-Key' => ['job-1']]), key: 'existing');
 
         $received = null;
@@ -70,7 +70,7 @@ final class QueueKeyMiddlewareTest
 
     public function passesThroughWhenContextNotAttributed(): void
     {
-        $middleware = new QueueKeyMiddleware(new KeyResolver());
+        $middleware = new QueueKeyMiddleware(new DefaultKeyResolver());
         $call = $this->call('not-a-context');
 
         $received = null;
@@ -85,7 +85,7 @@ final class QueueKeyMiddlewareTest
 
     public function extractsKeyFromJobHeader(): void
     {
-        $middleware = new QueueKeyMiddleware(new KeyResolver());
+        $middleware = new QueueKeyMiddleware(new DefaultKeyResolver());
         $call = $this->call(
             $this->jobContext(['Idempotency-Key' => ['job-1']]),
             keyScope: 'Op::run',
@@ -98,12 +98,12 @@ final class QueueKeyMiddlewareTest
         });
 
         Assert::notNull($received);
-        Assert::same($received->key, (new KeyResolver())->resolve('job-1', 'Op::run'));
+        Assert::same($received->key, (new DefaultKeyResolver())->resolve('job-1', 'Op::run'));
     }
 
     public function customHeaderName(): void
     {
-        $middleware = new QueueKeyMiddleware(new KeyResolver(), 'X-Dedup');
+        $middleware = new QueueKeyMiddleware(new DefaultKeyResolver(), 'X-Dedup');
         $call = $this->call($this->jobContext(['X-Dedup' => ['abc']]));
 
         $received = null;
@@ -113,12 +113,12 @@ final class QueueKeyMiddlewareTest
         });
 
         Assert::notNull($received);
-        Assert::same($received->key, (new KeyResolver())->resolve('abc', null));
+        Assert::same($received->key, (new DefaultKeyResolver())->resolve('abc', null));
     }
 
     public function missingHeaderThrowsMissingKey(): void
     {
-        $middleware = new QueueKeyMiddleware(new KeyResolver());
+        $middleware = new QueueKeyMiddleware(new DefaultKeyResolver());
         $call = $this->call($this->jobContext([]));
 
         Expect::exception(MissingKeyException::class);
@@ -128,7 +128,7 @@ final class QueueKeyMiddlewareTest
 
     public function blankHeaderThrowsMissingKey(): void
     {
-        $middleware = new QueueKeyMiddleware(new KeyResolver());
+        $middleware = new QueueKeyMiddleware(new DefaultKeyResolver());
         $call = $this->call($this->jobContext(['Idempotency-Key' => ['']]));
 
         Expect::exception(MissingKeyException::class);

@@ -15,7 +15,7 @@ use Spiral\Idempotency\Config\StorageConfig;
  *
  * @api
  */
-interface StorageFactoryInterface
+interface StorageFactory
 {
-    public function create(StorageConfig $config, StorageServices $services): IdempotencyInterface;
+    public function create(StorageConfig $config, StorageServices $services): Idempotency;
 }

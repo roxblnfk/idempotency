@@ -15,8 +15,8 @@ use Cycle\Transaction\TransactionMode;
 use Psr\Clock\ClockInterface;
 use Spiral\Idempotency\ExecuteOptions;
 use Spiral\Idempotency\Guarantee;
-use Spiral\Idempotency\GuaranteeProviderInterface;
-use Spiral\Idempotency\IdempotencyInterface;
+use Spiral\Idempotency\GuaranteeProvider;
+use Spiral\Idempotency\Idempotency;
 use Spiral\Idempotency\Uncacheable;
 use Spiral\Serializer\Serializer\PhpSerializer;
 use Spiral\Serializer\SerializerInterface;
@@ -35,7 +35,7 @@ use Spiral\Serializer\SerializerInterface;
  * @internal Built per storage alias by the bootloader; consumers resolve the configured storage
  *           from the {@see \Spiral\Idempotency\IdempotencyRegistry}. Not part of the public API.
  */
-final readonly class CycleInboxDriver implements IdempotencyInterface, GuaranteeProviderInterface
+final readonly class CycleInboxDriver implements Idempotency, GuaranteeProvider
 {
     private SerializerInterface $serializer;
 

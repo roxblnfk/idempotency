@@ -6,7 +6,7 @@ namespace Spiral\Idempotency\Tests\Unit\Pipeline;
 
 use Spiral\Idempotency\Internal\Pipeline\DefaultFailureClassifier;
 use Spiral\Idempotency\Pipeline\FailureKind;
-use Spiral\Idempotency\Pipeline\RetryableInterface;
+use Spiral\Idempotency\Pipeline\Retryable;
 use Testo\Assert;
 use Testo\Codecov\Covers;
 use Testo\Test;
@@ -22,7 +22,7 @@ final class DefaultFailureClassifierTest
 
     public function retryableExceptionIsInfrastructure(): void
     {
-        $e = new class ('x') extends \Exception implements RetryableInterface {};
+        $e = new class ('x') extends \Exception implements Retryable {};
 
         Assert::same((new DefaultFailureClassifier())->classify($e), FailureKind::Infrastructure);
     }

@@ -11,9 +11,9 @@ use Spiral\Core\Config\Proxy;
 use Spiral\Idempotency\Config\IdempotencyConfig;
 use Spiral\Idempotency\Exception\MisconfigurationException;
 use Spiral\Idempotency\IdempotencyRegistry;
+use Spiral\Idempotency\Interceptor\PipelineIdempotencyInterceptor;
 use Spiral\Idempotency\Interceptor\IdempotencyInterceptor;
-use Spiral\Idempotency\Interceptor\IdempotencyInterceptorInterface;
-use Spiral\Idempotency\KeyResolverInterface;
+use Spiral\Idempotency\KeyResolver;
 
 /**
  * Opt-in Queue wiring for the idempotency pipeline. No consumer-scope bindings: the queue resolution
@@ -22,10 +22,10 @@ use Spiral\Idempotency\KeyResolverInterface;
  * `transports.queue` config stack; the job context travels inside the call context, so nothing is
  * per-job-scoped here.
  *
- * The interceptor is exposed under the {@see IdempotencyInterceptorInterface} alias in two layers
+ * The interceptor is exposed under the {@see IdempotencyInterceptor} alias in two layers
  * (the framework's scoped-proxy pattern, cf. `TracerInterface` / `AuthContextInterface`):
  *
- *  - the REAL {@see IdempotencyInterceptor} (flavored with `transport: 'queue'`) is a singleton of the
+ *  - the REAL {@see PipelineIdempotencyInterceptor} (flavored with `transport: 'queue'`) is a singleton of the
  *    `queue` DISPATCHER scope — the scope lives as long as the queue dispatcher itself, so the
  *    interceptor and its internal caches survive across consumed jobs;
  *  - the ROOT container holds only a {@see Proxy}: a domain core may be built in any scope — every
@@ -35,7 +35,7 @@ use Spiral\Idempotency\KeyResolverInterface;
  *    the `http` scope under the same alias.
  *
  * An app registers the consume interceptor via `queue.php` `interceptors.consume` (or
- * `QueueBootloader::addConsumeInterceptor(IdempotencyInterceptorInterface::class)`) and lists the queue
+ * `QueueBootloader::addConsumeInterceptor(IdempotencyInterceptor::class)`) and lists the queue
  * middleware under `transports.queue` in `config/idempotency.php`. Spiral's default-on
  * `RetryPolicyInterceptor` should sit OUTER of ours so it catches the re-thrown
  * {@see \Spiral\Idempotency\Queue\RetryableLockException} and re-enqueues the job.
@@ -64,11 +64,11 @@ final class QueueIdempotencyBootloader extends Bootloader
             // NOTE: HttpIdempotencyBootloader binds this SAME alias to an identical Proxy in root — the
             // double binding is intentional and harmless (Spiral merges bindings; last wins; both bind
             // the same Proxy), so an app running either transport works without the other bootloader.
-            IdempotencyInterceptorInterface::class => new Proxy(
-                IdempotencyInterceptorInterface::class,
+            IdempotencyInterceptor::class => new Proxy(
+                IdempotencyInterceptor::class,
                 false,
                 static fn(): never => throw new MisconfigurationException(
-                    'IdempotencyInterceptorInterface is used outside of a transport dispatcher scope.',
+                    'IdempotencyInterceptor is used outside of a transport dispatcher scope.',
                     'The real interceptor is bound per transport: HttpIdempotencyBootloader binds the '
                     . 'http flavor inside the `http` scope, QueueIdempotencyBootloader binds the queue '
                     . 'flavor inside the `queue` scope. Invoke the interceptor while a transport scope is '
@@ -83,13 +83,13 @@ final class QueueIdempotencyBootloader extends Bootloader
         // The `queue` dispatcher scope, not root: dispatcher-lifetime singleton, and the alias stays
         // free for other transports' scopes.
         $binder->getBinder('queue')->bindSingleton(
-            IdempotencyInterceptorInterface::class,
+            IdempotencyInterceptor::class,
             static fn(
                 IdempotencyRegistry $registry,
-                KeyResolverInterface $keys,
+                KeyResolver $keys,
                 ContainerInterface $container,
                 IdempotencyConfig $config,
-            ): IdempotencyInterceptor => new IdempotencyInterceptor(
+            ): PipelineIdempotencyInterceptor => new PipelineIdempotencyInterceptor(
                 $registry,
                 $keys,
                 $container,

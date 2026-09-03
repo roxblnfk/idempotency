@@ -30,14 +30,14 @@ use Spiral\Idempotency\Guarantee;
 use Spiral\Idempotency\IdempotencyContext;
 use Spiral\Idempotency\IdempotencyRegistry;
 use Spiral\Idempotency\Internal\Lease\LeaseIdempotency;
-use Spiral\Idempotency\Internal\Lease\LeaseManager;
+use Spiral\Idempotency\Internal\Lease\DefaultLeaseManager;
 use Spiral\Idempotency\Internal\Lease\RandomTokenFactory;
 use Spiral\Idempotency\Internal\Pipeline\DefaultFailureClassifier;
 use Spiral\Idempotency\Lease\Acquired;
 use Spiral\Idempotency\Lease\AlreadyCompleted;
 use Spiral\Idempotency\Lease\LeaseState;
 use Spiral\Idempotency\Lease\Locked;
-use Spiral\Idempotency\Lease\TokenFactoryInterface;
+use Spiral\Idempotency\Lease\TokenFactory;
 use Spiral\Idempotency\Pipeline\Middleware\ClassifierMiddleware;
 use Spiral\Idempotency\Pipeline\Pipeline;
 use Spiral\Idempotency\Tests\Support\MutableClock;
@@ -175,7 +175,7 @@ abstract class CycleStorageTestCase extends DatabaseTestCase
     {
         $key = $this->key();
         $clock = new MutableClock();
-        $manager = new LeaseManager(new CycleLeaseStorage($this->db(), $clock), $clock);
+        $manager = new DefaultLeaseManager(new CycleLeaseStorage($this->db(), $clock), $clock);
 
         $acquired = $manager->acquire($key, 30);
         Assert::instanceOf($acquired, Acquired::class);
@@ -195,14 +195,14 @@ abstract class CycleStorageTestCase extends DatabaseTestCase
 
         // The original owner ("old") runs through the LeaseIdempotency handler; its operation takes long
         // enough for the lock TTL to lapse and a second worker ("new") to take the key over mid-flight.
-        $oldTokens = new class implements TokenFactoryInterface {
+        $oldTokens = new class implements TokenFactory {
             public function create(): string
             {
                 return 'old';
             }
         };
         $handler = new LeaseIdempotency(
-            new LeaseManager($storage, $clock, $oldTokens),
+            new DefaultLeaseManager($storage, $clock, $oldTokens),
             new Pipeline(new ClassifierMiddleware(new DefaultFailureClassifier())),
         );
 
@@ -220,7 +220,7 @@ abstract class CycleStorageTestCase extends DatabaseTestCase
         Assert::same($entry?->state, LeaseState::Processing);
 
         // The manager's strict contract is intact: a stale owner completing directly still throws.
-        $staleManager = new LeaseManager($storage, $clock, $oldTokens);
+        $staleManager = new DefaultLeaseManager($storage, $clock, $oldTokens);
         try {
             $staleManager->complete($key, 'old', true, 'ignored', 3600);
             Assert::fail('the stale owner must be rejected by the manager CAS');
@@ -236,7 +236,7 @@ abstract class CycleStorageTestCase extends DatabaseTestCase
     {
         $key = $this->key();
         $clock = new MutableClock();
-        $manager = new LeaseManager(new CycleLeaseStorage($this->db(), $clock), $clock);
+        $manager = new DefaultLeaseManager(new CycleLeaseStorage($this->db(), $clock), $clock);
         $manager->acquire($key, 30);
 
         Assert::instanceOf($manager->acquire($key, 30), Locked::class);

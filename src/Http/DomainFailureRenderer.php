@@ -13,7 +13,7 @@ use Psr\Http\Message\ResponseInterface;
  *
  * Why this exists: a thrown domain exception bypasses {@see HttpOutcomeMiddleware} on the first attempt
  * (the application exception handler renders it), while on replay the driver rethrows either the exact
- * type (see {@see \Spiral\Idempotency\ReplayableFailureInterface}) or a
+ * type (see {@see \Spiral\Idempotency\ReplayableFailure}) or a
  * {@see \Spiral\Idempotency\Exception\CachedDomainFailureException} — a type the handler does not know,
  * typically rendered as `500`. Two attempts, two statuses. Binding this interface moves the rendering
  * INSIDE the idempotent operation: the failure becomes a response before it is cached, so the first
@@ -34,7 +34,7 @@ use Psr\Http\Message\ResponseInterface;
  *
  * @api
  */
-interface DomainFailureRendererInterface
+interface DomainFailureRenderer
 {
     /**
      * @param \Throwable $failure a failure classified as Domain
