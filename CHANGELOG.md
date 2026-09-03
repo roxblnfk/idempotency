@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.0](https://github.com/spiral/idempotency/compare/0.2.1...0.3.0) (2026-09-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* every *Interface type is renamed (IdempotencyInterface -> Idempotency, IdempotencyInterceptorInterface -> IdempotencyInterceptor, KeyResolverInterface -> KeyResolver, LeaseManagerInterface -> LeaseManager, LeaseStorageInterface -> LeaseStorage, TokenFactoryInterface -> TokenFactory, FailureClassifierInterface -> FailureClassifier, StorageFactoryInterface -> StorageFactory, GuaranteeProviderInterface -> GuaranteeProvider, RetryableInterface -> Retryable, ReplayableFailureInterface -> ReplayableFailure, DomainFailureMapperInterface -> DomainFailureMapper, DomainFailureRendererInterface -> DomainFailureRenderer, SchemaNamingInterface -> SchemaNaming, RedisCommandsInterface -> RedisCommands); the concrete interceptor class is now PipelineIdempotencyInterceptor.
+
+### Features
+
+* **redis:** decouple the lease storage from predis ([#3](https://github.com/spiral/idempotency/issues/3)) ([af3693b](https://github.com/spiral/idempotency/commit/af3693b8b652f286f1889022b8d682382da28283))
+
+
+### Code Refactoring
+
+* drop the Interface suffix from every interface ([#5](https://github.com/spiral/idempotency/issues/5)) ([31a1f42](https://github.com/spiral/idempotency/commit/31a1f4220e1977ca844a13c4c7e092ea44fd5d14))
+
 ## [0.2.1](https://github.com/spiral/idempotency/compare/0.2.0...0.2.1) (2026-08-28)
 
 
