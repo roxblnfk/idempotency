@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Spiral\Idempotency\Tests\Unit\Driver\Redis;
 
+use Spiral\Core\Container;
 use Spiral\Idempotency\Config\StorageConfig;
 use Spiral\Idempotency\Driver\Redis\Internal\RedisLeaseFactory;
 use Spiral\Idempotency\Driver\Redis\RedisLeaseConfig;
@@ -43,8 +44,8 @@ final class RedisLeaseConfigTest
 
     public function factoryRejectsAForeignConfig(): void
     {
-        // The guard runs before any I/O, so a lazily-connecting predis client (no server needed) is safe.
-        $factory = new RedisLeaseFactory(new \Predis\Client());
+        // The config guard runs before the connection is resolved, so an empty container is enough.
+        $factory = new RedisLeaseFactory(new Container());
         $foreign = new class extends StorageConfig {
             public function guarantee(): Guarantee
             {

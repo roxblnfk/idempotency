@@ -125,7 +125,7 @@ $line($has('psr/http-message') && $has('psr/http-factory'), 'HTTP', 'HttpIdempot
 $line($has('spiral/queue'), 'Queue', 'QueueIdempotencyBootloader + transports.queue (consume interceptor)');
 $line($has('spiral/roadrunner-grpc') && $has('spiral/roadrunner-bridge'), 'gRPC', 'GrpcIdempotencyBootloader + transports.grpc');
 $line($has('cycle/database'), 'Cycle SQL', 'CycleLeaseConfig / CycleInboxConfig / CycleAtMostOnceConfig');
-$line($has('predis/predis'), 'Redis lease', 'RedisLeaseConfig (AtLeastOnce only, needs \\Predis\\ClientInterface binding)');
+$line($has('predis/predis'), 'Redis lease', 'RedisLeaseConfig (AtLeastOnce only, needs a RedisCommandsInterface or \\Predis\\ClientInterface binding)');
 
 // ---- Config files -----------------------------------------------------------------------------
 echo "\n## Config files\n";

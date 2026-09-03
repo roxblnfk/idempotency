@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Spiral\Idempotency\Tests\Acceptance\Driver\Redis;
 
 use Spiral\Idempotency\Driver\Redis\Internal\RedisLeaseStorage;
+use Spiral\Idempotency\Driver\Redis\PredisCommands;
 use Spiral\Idempotency\Internal\Lease\LeaseManager;
 use Spiral\Idempotency\Internal\Lease\RandomTokenFactory;
 use Spiral\Idempotency\Lease\Acquired;
@@ -191,7 +192,7 @@ final class RedisLeaseStorageTest
     private function storage(): RedisLeaseStorage
     {
         // A unique prefix per test process run keeps this suite's keys clear of any pre-existing data.
-        return new RedisLeaseStorage($this->client(), new MutableClock(), 'idempotency-test:');
+        return new RedisLeaseStorage(new PredisCommands($this->client()), new MutableClock(), 'idempotency-test:');
     }
 
     /**

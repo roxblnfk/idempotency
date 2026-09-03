@@ -109,7 +109,7 @@ Storage config classes (all data-only; the driver is picked by the config class)
 | `Driver\Cycle\CycleLeaseConfig` | AtLeastOnce | `connection` (DBAL db name, null = default), `table` = `'idempotency'`, `lockTtl` = 30, `retentionTtl` = 86400, `heartbeatThreshold` = 0.5 |
 | `Driver\Cycle\CycleInboxConfig` | ExactlyOnce | `connection`, `table` = `'inbox'`, `transactionMode` = `TransactionMode::Exclusive`, `flushMode`, `retentionTtl` = null (keep forever) |
 | `Driver\Cycle\CycleAtMostOnceConfig` | AtMostOnce | `connection`, `table` = `'idempotency_at_most_once'`, `cacheResult` = false (duplicate gets `null`), `retentionTtl` = null |
-| `Driver\Redis\RedisLeaseConfig` | AtLeastOnce | `keyPrefix` = `'idempotency:'`, `lockTtl` = 30, `retentionTtl` = 86400; needs `predis/predis` and a `\Predis\ClientInterface` binding in the container; server-side TTL, no GC needed |
+| `Driver\Redis\RedisLeaseConfig` | AtLeastOnce | `keyPrefix` = `'idempotency:'`, `lockTtl` = 30, `retentionTtl` = 86400; needs a Redis connection in the container: a `Driver\Redis\RedisCommandsInterface` binding (three-command adapter over any Redis client) or `predis/predis` with a `\Predis\ClientInterface` binding; server-side TTL, no GC needed |
 
 The declared guarantee is verified against the driver capability at bootstrap — a mismatch fails
 fast instead of silently weakening the promise.

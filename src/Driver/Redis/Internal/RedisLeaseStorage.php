@@ -5,12 +5,14 @@ declare(strict_types=1);
 namespace Spiral\Idempotency\Driver\Redis\Internal;
 
 use Psr\Clock\ClockInterface;
+use Spiral\Idempotency\Driver\Redis\RedisCommandsInterface;
 use Spiral\Idempotency\Lease\LeaseState;
 use Spiral\Idempotency\Lease\LeaseStorageInterface;
 use Spiral\Idempotency\Lease\StoredEntry;
 
 /**
- * Lease storage over a Redis/Valkey server (Valkey is API-compatible — the same predis client works).
+ * Lease storage over a Redis-compatible server (Redis, Valkey, Dragonfly), reached through the three
+ * commands of {@see RedisCommandsInterface} so any client library can back it.
  *
  * Data model: one Redis HASH per idempotency key at `{keyPrefix}{key}`, with fields `state`
  * (PROCESSING|COMPLETED), `token` (fencing token), `success` ('1'/'0') and `result` (opaque serialized
@@ -35,7 +37,7 @@ final readonly class RedisLeaseStorage implements LeaseStorageInterface
      * @param non-empty-string $keyPrefix
      */
     public function __construct(
-        private \Predis\ClientInterface $client,
+        private RedisCommandsInterface $client,
         private ClockInterface $clock,
         private string $keyPrefix = 'idempotency:',
     ) {}
@@ -136,7 +138,7 @@ final readonly class RedisLeaseStorage implements LeaseStorageInterface
      */
     private function eval(string $script, string $key, string ...$args): bool
     {
-        $result = $this->client->eval($script, 1, $this->prefixed($key), ...$args);
+        $result = $this->client->eval($script, [$this->prefixed($key)], \array_values($args));
 
         return (int) $result === 1;
     }
