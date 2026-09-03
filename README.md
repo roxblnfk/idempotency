@@ -23,8 +23,9 @@ Optional packages:
   (also needs a PSR-17 factory for the HTTP middleware);
 - `spiral/queue` — the queue/jobs transport (`QueueIdempotencyBootloader`, `QueueKeyMiddleware`,
   `QueueRetryMiddleware`), making consumed jobs idempotent with `Locked → native job retry`;
-- `predis/predis` — the Redis/Valkey lease backend (`RedisLeaseConfig`): AtLeastOnce storage over a
-  Redis-compatible server, with server-side TTL (no GC needed) and atomic Lua CAS;
+- `predis/predis` — the default client for the Redis/Valkey lease backend (`RedisLeaseConfig`): AtLeastOnce
+  storage over a Redis-compatible server, with server-side TTL (no GC needed) and atomic Lua CAS. Not
+  needed when `Driver\Redis\RedisCommandsInterface` is bound to an adapter over the app's own Redis client;
 - `spiral/cycle-bridge` — integrates the idempotency tables into the ORM schema
   (`cycle:sync` / `cycle:migrate`).
 

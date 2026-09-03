@@ -17,8 +17,9 @@ use Spiral\Idempotency\StorageFactoryInterface;
  * driver). Only the lease (AtLeastOnce) branch is offered here — the inbox (ExactlyOnce) needs a single
  * DB transaction over the side-effect and stays on the Cycle driver.
  *
- * No connection parameters live here: the `\Predis\ClientInterface` is injected into
- * {@see RedisLeaseFactory} from the container, mirroring how {@see \Spiral\Idempotency\Driver\Cycle\Internal\CycleLeaseFactory}
+ * No connection parameters live here: {@see RedisLeaseFactory} takes the connection from the container —
+ * a {@see RedisCommandsInterface} binding (an adapter over any Redis client), or a `\Predis\ClientInterface`
+ * binding wrapped in {@see PredisCommands} — mirroring how {@see \Spiral\Idempotency\Driver\Cycle\Internal\CycleLeaseFactory}
  * injects the DBAL provider.
  *
  * Security: cached results are (de)serialized by the storage's {@see \Spiral\Serializer\SerializerInterface}.
