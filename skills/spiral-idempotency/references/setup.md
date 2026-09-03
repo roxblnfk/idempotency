@@ -33,7 +33,7 @@ Decide from the report:
 |---|---|
 | `cycle/database` present | `CycleLeaseConfig` / `CycleInboxConfig` / `CycleAtMostOnceConfig` are available |
 | `cycle/database` < 2.21 | The `DO NOTHING` affected-row dedup is broken on MySQL/Postgres below that — tell the user an upgrade is required (their call to run it) |
-| `predis/predis` present (or a Redis service exists) | `RedisLeaseConfig` is available for AtLeastOnce (no GC needed) |
+| A Redis client is present (`predis/predis`, `ext-redis`, any other) or a Redis service exists | `RedisLeaseConfig` is available for AtLeastOnce (no GC needed); a non-predis client needs a `Driver\Redis\RedisCommandsInterface` adapter binding |
 | `spiral/queue` present | The queue transport applies (`QueueIdempotencyBootloader`) |
 | `spiral/roadrunner-bridge` + `spiral/roadrunner-grpc` present | The gRPC transport applies (`GrpcIdempotencyBootloader`) |
 | `spiral/cycle-bridge` present | `CycleSchemaBootloader` can put the tables into the ORM schema (`cycle:sync`/`cycle:migrate`) |
@@ -48,7 +48,8 @@ composer require spiral/idempotency
 
 That is the **only** package you may install on your own. Optional peers — `cycle/database`
 (bundled SQL driver), `spiral/interceptors` (the attribute path), `spiral/queue` (queue
-transport), `predis/predis` (Redis lease), `spiral/cycle-bridge` (tables in the ORM schema) —
+transport), `predis/predis` (Redis lease when the app has no Redis client to adapt), `spiral/cycle-bridge`
+(tables in the ORM schema) —
 are architecture decisions: if step 0 shows one is missing but needed, **ask the user for
 approval before installing it**; never `composer require` them unprompted.
 

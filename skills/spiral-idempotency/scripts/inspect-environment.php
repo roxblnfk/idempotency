@@ -102,7 +102,7 @@ $interesting = [
     'spiral/queue'             => 'queue transport',
     'spiral/roadrunner-bridge' => 'RoadRunner dispatchers (queue/gRPC scopes)',
     'spiral/roadrunner-grpc'   => 'gRPC transport',
-    'predis/predis'            => 'Redis/Valkey lease backend (RedisLeaseConfig)',
+    'predis/predis'            => 'default client for the Redis/Valkey lease backend (RedisLeaseConfig)',
     'psr/http-message'         => 'HTTP transport (PSR-7)',
     'psr/http-factory'         => 'HTTP transport (PSR-17, response snapshots)',
 ];
@@ -125,7 +125,12 @@ $line($has('psr/http-message') && $has('psr/http-factory'), 'HTTP', 'HttpIdempot
 $line($has('spiral/queue'), 'Queue', 'QueueIdempotencyBootloader + transports.queue (consume interceptor)');
 $line($has('spiral/roadrunner-grpc') && $has('spiral/roadrunner-bridge'), 'gRPC', 'GrpcIdempotencyBootloader + transports.grpc');
 $line($has('cycle/database'), 'Cycle SQL', 'CycleLeaseConfig / CycleInboxConfig / CycleAtMostOnceConfig');
-$line($has('predis/predis'), 'Redis lease', 'RedisLeaseConfig (AtLeastOnce only, needs a RedisCommandsInterface or \\Predis\\ClientInterface binding)');
+$redisClient = match (true) {
+    $has('predis/predis') => 'predis/predis found: bind \\Predis\\ClientInterface',
+    \extension_loaded('redis') => 'ext-redis found: bind RedisCommandsInterface to an adapter over \\Redis',
+    default => 'no Redis client found: bind RedisCommandsInterface to an adapter over the app\'s client, or install predis/predis',
+};
+$line($has('predis/predis') || \extension_loaded('redis'), 'Redis lease', "RedisLeaseConfig (AtLeastOnce only) — {$redisClient}");
 
 // ---- Config files -----------------------------------------------------------------------------
 echo "\n## Config files\n";
